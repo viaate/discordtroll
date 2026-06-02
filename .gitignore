@@ -4,6 +4,9 @@ node_modules/
 # Secrets
 .env
 
+# Private style dataset (never commit your message history)
+my_style_dataset_reversed.txt
+
 # Logs
 *.log
 npm-debug.log*

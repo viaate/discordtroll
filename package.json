@@ -11,6 +11,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5"
   }

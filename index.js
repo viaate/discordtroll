@@ -14,6 +14,10 @@
 // -----------------------------------------------------------------------------
 
 import 'dotenv/config';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import Anthropic from '@anthropic-ai/sdk';
 import {
   Client,
   GatewayIntentBits,
@@ -29,13 +33,56 @@ import {
 // Configuration & client setup
 // -----------------------------------------------------------------------------
 
-const { DISCORD_TOKEN, OWNER_ID } = process.env;
+const { DISCORD_TOKEN, OWNER_ID, ANTHROPIC_API_KEY } = process.env;
 
 if (!DISCORD_TOKEN || !OWNER_ID) {
   console.error(
     '[FATAL] Missing DISCORD_TOKEN or OWNER_ID. Copy .env.example to .env and fill it in.'
   );
   process.exit(1);
+}
+
+// The AI-powered Impersonator modes (CloneChat, SchizoClone) need this key.
+// It's optional — every other mode (including GhostEcho) works without it.
+if (!ANTHROPIC_API_KEY) {
+  console.warn(
+    '[WARN] ANTHROPIC_API_KEY not set — CloneChat and SchizoClone will be disabled. (GhostEcho still works.)'
+  );
+}
+
+const anthropic = ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: ANTHROPIC_API_KEY })
+  : null;
+
+// Haiku tier for speed/cost. NOTE: the originally-requested
+// claude-3-haiku-20240307 retired 2026-04-19; claude-haiku-4-5 is its
+// supported, faster successor.
+const CLONE_MODEL = 'claude-haiku-4-5';
+
+// -----------------------------------------------------------------------------
+// Style dataset — loaded ONCE at startup.
+//   STYLE_DATASET_TEXT  : the whole file as a single string (AI prompt context)
+//   STYLE_DATASET_LINES : non-empty lines as an array (GhostEcho local lookup)
+// The file is git-ignored and lives next to index.js at runtime.
+// -----------------------------------------------------------------------------
+
+let STYLE_DATASET_TEXT = '';
+let STYLE_DATASET_LINES = [];
+try {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const datasetPath = path.join(__dirname, 'my_style_dataset_reversed.txt');
+  STYLE_DATASET_TEXT = fs.readFileSync(datasetPath, 'utf8');
+  STYLE_DATASET_LINES = STYLE_DATASET_TEXT.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  console.log(
+    `[READY] Loaded style dataset: ${STYLE_DATASET_TEXT.length} chars, ${STYLE_DATASET_LINES.length} lines.`
+  );
+} catch (err) {
+  console.warn(
+    `[WARN] Could not read my_style_dataset_reversed.txt (${err.code || err.message}). ` +
+      'CloneChat / SchizoClone / GhostEcho will be limited until it exists.'
+  );
 }
 
 const client = new Client({
@@ -269,6 +316,68 @@ function isNo(text) {
   return /\b(no|nope|nah|never|not|don'?t|cant|can'?t|false|wrong|negative|stop)\b/i.test(
     text || ''
   );
+}
+
+// ---- Impersonator (AI) modes -----------------------------------------------
+
+const CLONE_SYSTEM =
+  'You are a personality clone. Read the provided dataset of my past Discord ' +
+  'messages. You must reply to the target\'s message EXACTLY in my style. Copy ' +
+  'my exact capitalization rules (e.g., if I use lowercase, you use lowercase), ' +
+  'my slang, my brevity, and my punctuation. Do not act like an AI. Keep it ' +
+  'short — usually a single short line, like a real text message.';
+
+const SCHIZO_SYSTEM =
+  'You ARE me, texting a friend from my phone. Read the provided dataset of my ' +
+  'past Discord messages and mimic my style PERFECTLY — my exact capitalization ' +
+  '(lowercase if I write lowercase), slang, brevity, and punctuation. The person ' +
+  'you are talking to may suspect you are a bot or an AI. If they accuse you of ' +
+  'being a bot/AI/script, deny it casually and a little defensively, in my exact ' +
+  'texting cadence (e.g., "wdym im literally on my phone rn lol", "bro im not a ' +
+  'bot 💀", "lmao what are you on about"). NEVER break character, NEVER admit to ' +
+  'being an AI, and keep every reply short and human.';
+
+// Shared call path for CloneChat / SchizoClone. The 72KB dataset is identical
+// on every request, so it goes in a cached system block — after the first call
+// it's served from cache at ~10% of input cost instead of full price each time.
+async function styleClone(message, systemText) {
+  if (!anthropic) {
+    await message.reply('(clone offline — owner needs to set ANTHROPIC_API_KEY)');
+    return;
+  }
+  if (!STYLE_DATASET_TEXT) {
+    await message.reply('(clone offline — style dataset missing)');
+    return;
+  }
+
+  await message.channel.sendTyping();
+  try {
+    const response = await anthropic.messages.create({
+      model: CLONE_MODEL,
+      max_tokens: 300,
+      system: [
+        { type: 'text', text: systemText },
+        {
+          // Big, stable block last → cache_control breakpoint caches it (and
+          // the instructions before it) across every message.
+          type: 'text',
+          text: `Here is the dataset of my past messages, one per line:\n\n${STYLE_DATASET_TEXT}`,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+      messages: [{ role: 'user', content: message.content || '...' }],
+    });
+
+    const reply = response.content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('')
+      .trim();
+
+    if (reply) await message.reply(reply);
+  } catch (err) {
+    console.error('[clone] Anthropic API error:', err?.status || '', err?.message || err);
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -1212,8 +1321,51 @@ const modes = {
     );
   },
 
+  // ===========================================================================
+  // IMPERSONATOR MODES — clone the OWNER's texting style from a local dataset.
+  // ===========================================================================
+
+  // Mode 26: CloneChat (AI) — reply to the target in the owner's exact style,
+  // using the message history dataset as context.
+  async CloneChat(message, entry) {
+    await styleClone(message, CLONE_SYSTEM);
+  },
+
+  // Mode 27: SchizoClone (AI) — same style mimicry, but actively gaslights the
+  // target into believing it's really the owner texting, denying it's a bot.
+  async SchizoClone(message, entry) {
+    await styleClone(message, SCHIZO_SYSTEM);
+  },
+
+  // Mode 28: GhostEcho (local, no API) — reply with a real historical message
+  // of the owner's that contains the target's most prominent word; if none
+  // matches, a random line. 2.5s delay so it feels like a real text.
+  async GhostEcho(message, entry) {
+    if (!STYLE_DATASET_LINES.length) return;
+    if (entry.state.busy) return; // don't stack replies
+    entry.state.busy = true;
+    try {
+      const keyword = keywordOf(message.content).toLowerCase();
+      // Whole-word, case-insensitive match against the owner's history.
+      const wordRe = new RegExp(
+        `\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+        'i'
+      );
+      const matches = STYLE_DATASET_LINES.filter((line) => wordRe.test(line));
+      const choice = matches.length
+        ? pick(matches)
+        : pick(STYLE_DATASET_LINES);
+
+      await sleep(2500); // feels like a human typing a reply
+      if (!isLive(entry)) return;
+      await message.reply(choice);
+    } finally {
+      entry.state.busy = false;
+    }
+  },
+
   // ---------------------------------------------------------------------------
-  // Mode 26: AutoRage — the automated ragebait gauntlet. Runs a curated
+  // Mode 29: AutoRage — the automated ragebait gauntlet. Runs a curated
   // sequence of the OTHER modes against the target, strictly ONE AT A TIME,
   // fully finishing each stage before advancing, then loops forever until
   // !stop. Each incoming target message drives the current stage; messages that

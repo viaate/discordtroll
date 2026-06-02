@@ -149,6 +149,27 @@ Because they're real conversations, dialog modes are **not** part of `AutoRage`
 !troll David CustomerSupport
 ```
 
+### 🧬 Impersonator modes (clone your own style)
+
+These mimic **your** texting style from a local dataset of your past messages.
+
+**Setup:** put a file named `my_style_dataset_reversed.txt` in the project root
+— one of your past messages per line. It's git-ignored, so it never leaves your
+machine. It's loaded once at startup into memory.
+
+| Name | Behavior |
+| ---- | -------- |
+| `CloneChat` | (AI) Replies to the target in your exact style — capitalization, slang, brevity, punctuation — using the dataset as context. Needs `ANTHROPIC_API_KEY`. |
+| `SchizoClone` | (AI) Same mimicry, but actively insists it's really *you* texting from your phone and denies being a bot if accused. Needs `ANTHROPIC_API_KEY`. |
+| `GhostEcho` | (local, no API) Replies with a real past message of yours that contains the target's most prominent word; random line if none match. 2.5s delay so it feels human. |
+
+Notes:
+- `CloneChat`/`SchizoClone` use the **`claude-haiku-4-5`** model (fast/cheap).
+  The 72KB dataset is sent as a **prompt-cached** system block, so after the
+  first reply it's served from cache at a fraction of the cost.
+- `GhostEcho` needs no API key — only the dataset file.
+- All three are kept out of `AutoRage`.
+
 ### How content-awareness works
 
 `TypoGaslight` is the clearest example. If the target sends:
