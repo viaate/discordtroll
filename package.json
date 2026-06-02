@@ -1,0 +1,17 @@
+{
+  "name": "discord-troll-bot",
+  "version": "1.0.0",
+  "description": "A remote-controlled Discord DM bot that runs interactive 'troll modes' against targeted users, driven entirely from the owner's DMs.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5"
+  }
+}
