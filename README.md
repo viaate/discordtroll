@@ -155,7 +155,7 @@ LoadingBar, WordSpammer, PhantomTyper) to fully finish before starting the next.
 
 ## Slash Command: `/usernamegenerator`
 
-Anyone who shares a server with the bot (or DMs it) can run:
+Run it **in a DM with the bot**:
 
 ```
 /usernamegenerator input:Olivia
@@ -165,6 +165,9 @@ Anyone who shares a server with the bot (or DMs it) can run:
 (e.g. `Poopy Olivia`, `Stinky Olivia`). It's a harmless novelty command — and a
 convenient reason to get people to add the bot. Global slash commands can take
 up to an hour to appear the first time after the bot starts.
+
+If someone runs it in a server, the bot replies (only visible to them) that the
+command is DM-only and explains how to message the bot directly.
 
 ## Notes & Safety
 

@@ -1261,11 +1261,11 @@ async function handleOwnerCommand(message) {
 const SLASH_COMMANDS = [
   new SlashCommandBuilder()
     .setName('usernamegenerator')
-    .setDescription('Generate 10 totally legit, cool username ideas from your name!')
+    .setDescription('Generate fun username ideas from a name.')
     .addStringOption((option) =>
       option
         .setName('input')
-        .setDescription('Your name or base username (e.g. Olivia)')
+        .setDescription('The name to base ideas on')
         .setRequired(true)
         .setMaxLength(40)
     )
@@ -1305,6 +1305,22 @@ client.on('interactionCreate', async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName !== 'usernamegenerator') return;
+
+    // DM-only: if run in a server, explain how to use it in DMs instead.
+    if (interaction.inGuild()) {
+      await interaction.reply({
+        content: [
+          '👋 This command only works in a direct message with me!',
+          '',
+          'To use it:',
+          `1. Click my name (**${interaction.client.user.username}**) or my avatar.`,
+          '2. Send me a direct message.',
+          '3. Type `/usernamegenerator` there and enter a name.',
+        ].join('\n'),
+        ephemeral: true,
+      });
+      return;
+    }
 
     const input = interaction.options.getString('input', true);
     const names = generateUsernames(input);
