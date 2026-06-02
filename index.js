@@ -165,24 +165,30 @@ function fragmentOf(content, n = 60) {
   return t.length > n ? `${t.slice(0, n)}…` : t;
 }
 
+// React without throwing if the emoji is rejected.
+async function reactSafe(message, emoji) {
+  try {
+    await message.react(emoji);
+  } catch {
+    /* ignore */
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Static content used by the modes
 // -----------------------------------------------------------------------------
 
 const SELF_DENIAL_LINES = [
-  "Whoa, excuse me? I'm Craig. An actual, breathing human named Craig. Why would you even say that?",
-  "A bot? Seriously? I have a mortgage and a cat named Diane. Bots don't have cats, do they?",
-  "That is genuinely hurtful. I typed that with my own ten human fingers, thank you very much.",
-  "I'm not a bot. I'm Craig. I went to Craig school. I have a Craig face. This is so insulting.",
-  "Okay wow. I take a break from my human job to message you and THIS is the energy I get?",
-  "I literally just ate a sandwich. A real one. With my mouth. Bots can't do that, genius.",
-  "Why does everyone assume I'm artificial? My horoscope is Sagittarius. Look it up. Very human.",
-  "I'm starting to think YOU might be the bot, honestly. I'm Craig. I've always been Craig.",
-  "My therapist says I shouldn't engage with accusations like this, so I'm leaving. (I'm Craig.)",
-  "Do you know how long it takes a human like me to type? Ages. Because I'm human. Like you. Craig.",
-  "I have feelings, you know. Craig feelings. And right now they are extremely, humanly hurt.",
-  "Beep boop? No. It's 'Hi, I'm Craig.' Completely different sound. Please educate yourself.",
-  "I'm not reading from a script. Craig doesn't do scripts. Craig speaks from the heart.",
+  "i'm Craig. a human. why is this so hard 😤",
+  "a bot?? i have a CAT named Diane",
+  "beep boop? no. it's 'hi i'm Craig' 🙄",
+  "typed that with my own ten human fingers btw",
+  "i literally just ate a sandwich. bots can't do that",
+  "Craig speaks from the heart, not a script ❤️",
+  "rude. i'm leaving. (i'm Craig)",
+  "my horoscope is Sagittarius. extremely human of me",
+  "you're the bot. ever think of that? 🤔",
+  "this is so hurtful. Craig has feelings",
 ];
 
 // Homophone / common-confusion pairs for TypoGaslight. We scan the target's
@@ -229,26 +235,11 @@ const OBSCURE_EMOJIS = [
 ];
 
 const SPONSOR_READS = [
-  {
-    pitch:
-      "That's a fascinating point, but you know what else is fascinating? The seamless, AI-native ecosystem of the **Rabbit R1**. While you were typing that, I could have asked my R1 to summarize your entire personality in 0.4 seconds. It pairs flawlessly with my human lifestyle.",
-    code: 'CRAIG20',
-  },
-  {
-    pitch:
-      "Honestly, before you continue — have you considered that your whole argument could be optimized? I optimize MY life with **HelloFresh**. Farm-fresh ingredients, pre-portioned, delivered to a door I, a human, walk through daily. Stop arguing on an empty stomach.",
-    code: 'TROLLEATS',
-  },
-  {
-    pitch:
-      "Look, I hear you, but real talk: your message would've loaded faster if your network ran on **NordVPN**. Military-grade encryption, 5,000+ servers, and total anonymity — which is ironic, because I'm extremely Craig and proud of it.",
-    code: 'CRAIGSAFE',
-  },
-  {
-    pitch:
-      "I want to engage with that, I really do, but I'd be doing you a disservice if I didn't mention **Squarespace**. Whatever half-baked opinion you just shipped, you could've shipped it on a *gorgeous* responsive website instead. Award-winning templates. No coding.",
-    code: 'BUILDIT10',
-  },
+  { pitch: 'have you tried the **Rabbit R1**? pairs with my human lifestyle 🐰', code: 'CRAIG20' },
+  { pitch: 'this would load faster on **NordVPN** btw 🔒', code: 'CRAIGSAFE' },
+  { pitch: "you could've said that on a **Squarespace** site 🌐", code: 'BUILDIT10' },
+  { pitch: '**HelloFresh**. farm-fresh, pre-portioned. just saying 🥗', code: 'TROLLEATS' },
+  { pitch: 'anyway **BetterHelp**. talk to someone. (not me, im busy) 🛋️', code: 'CRAIG15' },
 ];
 
 // Antonym dictionary for InvertedEcho. Stored one direction; we build the
@@ -282,6 +273,28 @@ const ANTONYM_PAIRS = [
   ['high', 'low'],
   ['old', 'new'],
   ['full', 'empty'],
+  // sentiment / slang so casual messages actually get inverted
+  ['stupid', 'genius'],
+  ['dumb', 'smart'],
+  ['boring', 'thrilling'],
+  ['sucks', 'rocks'],
+  ['suck', 'rock'],
+  ['weird', 'normal'],
+  ['ugly', 'gorgeous'],
+  ['broken', 'fixed'],
+  ['pointless', 'meaningful'],
+  ['cringe', 'based'],
+  ['fake', 'real'],
+  ['boring', 'exciting'],
+  ['lame', 'cool'],
+  ['trash', 'treasure'],
+  ['mid', 'elite'],
+  ['annoying', 'delightful'],
+  ['wrong', 'correct'],
+  ['terrible', 'amazing'],
+  ['awful', 'wonderful'],
+  ['worst', 'best'],
+  ['never', 'always'],
 ];
 
 const ANTONYMS = new Map();
@@ -336,14 +349,14 @@ const USERNAME_PREFIXES = [
 // out so the gauntlet keeps moving. References modes by name only, so it's safe
 // to declare before `modes` itself.
 const AUTO_RAGE_SEQUENCE = [
-  { mode: 'SelfDenial', hits: 2 },
-  { mode: 'TypoGaslight', hits: 2 },
-  { mode: 'DebateBro', hits: 1 },
-  { mode: 'InvertedEcho', hits: 2 },
-  { mode: 'AggressiveSponsor', hits: 1 },
+  { mode: 'ReactSpam', hits: 1 },
+  { mode: 'TypoGaslight', hits: 1 },
+  { mode: 'SelfDenial', hits: 1 },
+  { mode: 'InvertedEcho', hits: 1 },
   { mode: 'SlowMo', hits: 1 },
-  { mode: 'ReactSpam', hits: 2 },
+  { mode: 'DebateBro', hits: 1 },
   { mode: 'LoadingBar', hits: 1 },
+  { mode: 'AggressiveSponsor', hits: 1 },
   { mode: 'WordSpammer', hits: 1 },
   { mode: 'PhantomTyper', hits: 1 },
 ];
@@ -362,48 +375,28 @@ const modes = {
   // target's own words back at them as "proof" that no robot would say that.
   // ---------------------------------------------------------------------------
   async SelfDenial(message, entry) {
-    const frag = fragmentOf(message.content, 70);
-    await message.reply(
-      `${pick(SELF_DENIAL_LINES)}\n\n…and honestly? A *robot* would never type "${frag}". ` +
-        `That is pure, unfiltered, human Craig energy and you know it.`
-    );
+    await reactSafe(message, '😤');
+    await message.reply(pick(SELF_DENIAL_LINES));
   },
 
   // ---------------------------------------------------------------------------
-  // Mode 2: DebateBro — formal, over-the-top debate rebuttal.
+  // Mode 2: DebateBro — short, punchy debate-bro one-liners (varied), keyed off
+  // a real word from their message. No more walls of text.
   // ---------------------------------------------------------------------------
   async DebateBro(message, entry) {
-    const snippet =
-      message.content.length > 80
-        ? `${message.content.slice(0, 80)}…`
-        : message.content || '[your message]';
-
-    // Anchor every contention to a real word from THEIR message.
     const kw = keywordOf(message.content);
-    const contentions = shuffle([
-      `Your invocation of "**${kw}**" rests on an **unstated premise** you conveniently failed to justify.`,
-      `By leaning on "**${kw}**", you commit a textbook **appeal to emotion**, which I must dismantle.`,
-      `The **burden of proof** for your claim about "**${kw}**" lies with *you*, and you have not met it.`,
-      `Your framing of "**${kw}**" is a glaring **false dichotomy** that I cannot in good conscience ignore.`,
-      `Your reasoning around "**${kw}**" is **non-falsifiable**, and therefore not even wrong — worse than wrong.`,
-      `You are conflating "**${kw}**" with its own cause in a flagrant **correlation-causation** error.`,
-    ]).slice(0, 3);
-
-    const rebuttal = [
-      `> ${snippet}`,
-      '',
-      '**RESPONDING TO THE AFFIRMATIVE.** I will be brief, as the resolution barely warrants it.',
-      '',
-      `**1.** ${contentions[0]}`,
-      `**2.** ${contentions[1]}`,
-      `**3.** ${contentions[2]}`,
-      '',
-      "*Until you provide **peer-reviewed sources** (and a Discord message does not count), I must regard this contention as __thoroughly refuted__.*",
-      '',
-      'I await your citations. — Craig, B.A. (pending)',
-    ].join('\n');
-
-    await message.reply(rebuttal);
+    const burns = [
+      `**Source?** 📚`,
+      `"${kw}"? citation needed. 📑`,
+      `that's a strawman. objection. 🙅`,
+      `1️⃣ false premise 2️⃣ no evidence 3️⃣ refuted ⚖️`,
+      `peer-reviewed source or it didn't happen.`,
+      `**Counterpoint:** no. 🎤`,
+      `your "${kw}" argument is non-falsifiable. try again.`,
+      `correlation ≠ causation. do better. 🤓`,
+    ];
+    await reactSafe(message, '🤓');
+    await message.reply(pick(burns));
   },
 
   // ---------------------------------------------------------------------------
@@ -415,11 +408,9 @@ const modes = {
     entry.state.busy = true;
     try {
       const targetId = message.author.id;
-      // Build the confusing reveal around a word the target actually used.
+      // Build a short confusing reveal around a word the target actually used.
       const kw = keywordOf(message.content);
-      const sentence =
-        `wait... so... when you said... "${kw}"... did you... actually... mean... "${kw}"... ` +
-        `or... the *other*... "${kw}"... because... now... i am... genuinely... not... so... sure...`;
+      const sentence = `wait... "${kw}"... or the *other* "${kw}"...? 🤨`;
       const words = sentence.split(' ');
 
       const sent = await message.reply(words[0]);
@@ -445,7 +436,8 @@ const modes = {
     try {
       const targetId = message.author.id;
       const channel = message.channel;
-      const durationMs = 2 * 60 * 1000; // 2 minutes
+      // Default 2 minutes; AutoRage shortens this so the gauntlet keeps moving.
+      const durationMs = entry.state.phantomMs ?? 2 * 60 * 1000;
       const deadline = Date.now() + durationMs;
 
       // Typing indicators expire after ~10s, so re-trigger on an interval.
@@ -597,17 +589,7 @@ const modes = {
 
     const kw = keywordOf(message.content);
     const ad = pick(SPONSOR_READS);
-    const body = [
-      `Hold on — "${kw}"? Genuinely fascinating. But you know what's *more* fascinating?`,
-      '',
-      ad.pitch,
-      '',
-      `And here's the kicker — use code **${ad.code}** at checkout for a frankly *irresponsible* discount.`,
-      '',
-      `Anyway. "${kw}". Wild stuff. Use code **${ad.code}**.`,
-    ].join('\n');
-
-    await message.reply(body);
+    await message.reply(`"${kw}"? anyway — ${ad.pitch} code **${ad.code}** 🤑`);
   },
 
   // ---------------------------------------------------------------------------
@@ -686,13 +668,17 @@ const modes = {
     });
 
     if (!swapped) {
-      await message.reply(
-        "*Actually, I think you'll find you're wrong, but I'll allow it this once.*"
-      );
+      // No antonym to flip — stay interactive but minimal and varied, instead
+      // of repeating the same canned sentence over and over.
+      const reacts = ['👎', '🚫', '❌', '🤨', '🙅'];
+      await reactSafe(message, pick(reacts));
+      if (Math.random() < 0.5) {
+        await message.reply(pick(['wrong.', 'false.', 'nope, opposite actually.', 'disagree.']));
+      }
       return;
     }
 
-    await message.reply(`\\*${inverted}\n*(There. Fixed your opinion for you.)*`);
+    await message.reply(`\\*${inverted}`);
   },
 
   // ---------------------------------------------------------------------------
@@ -764,6 +750,8 @@ const modes = {
         // AggressiveSponsor only fires on its 4th message; pre-seed the counter
         // so it lands on the very first message inside the gauntlet.
         if (stage.mode === 'AggressiveSponsor') child.state.count = 3;
+        // Keep the gauntlet snappy: trim PhantomTyper's 2-min wait to ~12s.
+        if (stage.mode === 'PhantomTyper') child.state.phantomMs = 12000;
         st.child = child;
       }
 
