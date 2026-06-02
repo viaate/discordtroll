@@ -259,6 +259,18 @@ async function reactSafe(message, emoji) {
   }
 }
 
+// Loose yes/no detection so dialog modes can branch on the victim's answer.
+function isYes(text) {
+  return /\b(yes|yeah|yep|yup|ya|sure|ok|okay|k|fine|correct|true|i do|i am|done|confirm|confirmed|affirmative)\b/i.test(
+    text || ''
+  );
+}
+function isNo(text) {
+  return /\b(no|nope|nah|never|not|don'?t|cant|can'?t|false|wrong|negative|stop)\b/i.test(
+    text || ''
+  );
+}
+
 // -----------------------------------------------------------------------------
 // Static content used by the modes
 // -----------------------------------------------------------------------------
@@ -426,6 +438,89 @@ const FAKE_RULES = [
   '§9.1 Insufficient Rizz',
   '§2.5 Posting While Goofy',
   '§6.6 Unlicensed Opinion Distribution',
+];
+
+// ---- Dialog-mode scripts (multi-turn conversations) ------------------------
+
+// WrongNumber: bot "texted the wrong number" and refuses to accept it.
+const WRONG_NUMBER_PERSONAS = [
+  { name: 'Jordan', hook: "YO it's Jordan from saturday 🎉 you still bringing the speakers or nah?" },
+  { name: 'Carol', hook: 'hi sweetie it\'s aunt carol 💕 did the casserole turn out ok??' },
+  { name: 'Marcus', hook: 'bro. BRO. you are NOT gonna believe what just happened 😭 you up??' },
+  { name: 'Tay', hook: 'omg hi!! it\'s tay from the gym 💪 we still on for leg day tmrw?' },
+];
+const WRONG_NUMBER_ARC = [
+  (n) => `wait what do you mean who is this 😭 it's ME. ${n}. stop playing`,
+  () => `ok very funny. we LITERALLY hung out like 2 days ago?? 💀`,
+  () => `hold on... is this not Megan's number?? 🤨 who is this fr`,
+  (n) => `oh no. oh my GOD. have i been texting a stranger this whole time 💀 i'm ${n} btw`,
+  () => `ok i'm so embarrassed 🙈 but ngl you seem cool. what's your name?`,
+];
+const WRONG_NUMBER_CASUAL = [
+  'ok now that we\'re friends — pineapple on pizza, defend your answer 🍍',
+  'real question: worst movie you genuinely love?',
+  'if you fought 100 duck-sized horses, how\'s that going for you',
+  'be honest, how many browser tabs do you have open rn 👀',
+  'settle a debate for me and Carol — is a hot dog a sandwich?',
+];
+
+// Interrogation: escalating "standard questions", acknowledging each answer.
+const INTERROGATION_QS = [
+  'are you currently sitting down?',
+  'have you ever lied to a pet?',
+  'be honest: do you actually wash your legs in the shower?',
+  'on a scale of 1–10, how suspicious are you feeling right now?',
+  'quick — what was the 4th word of your last message? no scrolling.',
+  'do you trust me? yes or no.',
+  'final question, think carefully... are you SURE about that last answer?',
+];
+const INTERROGATION_ACKS = [
+  'interesting.',
+  'noted. 📝',
+  'hm. that tracks.',
+  'that\'s exactly what the last person said.',
+  'ok that\'s mildly concerning but go on.',
+  'i\'m writing this down.',
+  '👁️ ...okay.',
+];
+const INTERROGATION_VERDICTS = [
+  'processing... 🤔 ...yeah. you\'re definitely the imposter. 🔴',
+  'results are in: 87% sus, 13% guilty. case closed. 🧑‍⚖️',
+  'the council has reviewed your answers. we\'re disappointed but not surprised.',
+  'verdict: guilty of being kind of a lot. anyway, round 2 — are you sitting down?',
+];
+
+// CustomerSupport: absurd troubleshooting for a product they never bought.
+const SUPPORT_STEPS = [
+  'great 👍 first, have you tried turning it off and on again? reply **DONE**.',
+  'perfect. now unplug it, wait 30 seconds, and whisper a small apology to it. reply **DONE**.',
+  'excellent progress. hold the crumb tray above your head and tell me your current latitude.',
+  'mhm. now describe the toaster\'s emotional state in exactly 3 words.',
+  'i see. have you tried being *nicer* to it? give it a compliment and reply **DONE**.',
+  'and when did the toaster first start making you feel this way?',
+];
+const SUPPORT_CLOSER =
+  '✅ Wonderful! I\'ve escalated ticket **#4471** to Tier 2. Estimated wait time: 6–8 business years. Is there anything else I can help you with today? 😊';
+
+// GuessNumber: a rigged guessing game with contradictory hints.
+const GUESS_HINTS = [
+  'nope. higher. ⬆️',
+  'nope, lower. ⬇️',
+  'colder. 🥶',
+  'warmer... no wait, colder.',
+  'SO close. but no.',
+  'that\'s not even a number i respect honestly',
+  'hmm nope. bold guess though.',
+];
+
+// StoryTime: collaborative mad-libs that uses their actual words.
+const STORY_PROMPTS = [
+  'a noun',
+  'a verb ending in -ing',
+  'an adjective',
+  "a person you know's name",
+  'a number',
+  'a body part (keep it pg 🙏)',
 ];
 
 // HostageDelivery riddles: answer-matching is done with simple substring checks.
@@ -900,21 +995,24 @@ const modes = {
   },
 
   // ---------------------------------------------------------------------------
-  // Mode 16: Therapist — respond to everything like a detached therapist.
+  // Mode 16: Therapist — a real back-and-forth: follows up on THEIR words and
+  // keeps probing so they have to keep answering.
   // ---------------------------------------------------------------------------
   async Therapist(message, entry) {
-    const lines = [
-      'and how does that make you feel?',
-      'interesting. tell me more about that.',
-      'and when did you first start feeling this way?',
-      "let's sit with that for a moment.",
-      'mm. and your father — how was that relationship?',
-      'i hear you. our time is almost up though.',
-      'what do YOU think it means?',
-      'and how long have you felt this need to be right?',
-      '*writes something down* …go on.',
+    const kw = keywordOf(message.content);
+    const s = entry.state;
+    s.t = (s.t || 0) + 1;
+    const followups = [
+      `and how does **${kw}** make you feel, exactly?`,
+      `tell me more about this **${kw}**.`,
+      `and when did **${kw}** first become a problem for you?`,
+      'mm. and how does that connect back to your childhood?',
+      'i hear you. and what do YOU think that says about you?',
+      "let's sit with that for a second. ...okay. and then what?",
+      `interesting that you mention **${kw}**. does your family know?`,
+      'our time is almost up — but quickly, why do you think you do that?',
     ];
-    await message.reply(pick(lines));
+    await message.reply(pick(followups));
   },
 
   // ---------------------------------------------------------------------------
@@ -998,8 +1096,123 @@ const modes = {
     await message.reply(pick(lines));
   },
 
+  // ===========================================================================
+  // DIALOG MODES — actual multi-turn conversations. These open with a hook
+  // (see MODE_OPENERS) and branch on what the victim says, so there's a real
+  // back-and-forth instead of disconnected one-liners.
+  // ===========================================================================
+
+  // Mode 21: WrongNumber — "texted the wrong number" and won't let it go, then
+  // befriends them and keeps the chat alive with questions.
+  async WrongNumber(message, entry) {
+    const s = entry.state;
+    if (!s.persona) s.persona = pick(WRONG_NUMBER_PERSONAS);
+    s.step = s.step || 0;
+    const name = s.persona.name;
+
+    if (s.step < WRONG_NUMBER_ARC.length) {
+      const line = WRONG_NUMBER_ARC[s.step](name);
+      s.step++;
+      await message.reply(line);
+    } else {
+      // Befriended phase — keep asking casual questions forever.
+      await message.reply(pick(WRONG_NUMBER_CASUAL));
+    }
+  },
+
+  // Mode 22: Interrogation — escalating "standard questions" that acknowledge
+  // each answer and demand the next one.
+  async Interrogation(message, entry) {
+    const s = entry.state;
+    if (s.qi == null) s.qi = 0;
+    const ack = pick(INTERROGATION_ACKS);
+    if (s.qi === 0) {
+      s.qi = 1;
+      await message.reply(`${ack}\n\n**Q1.** ${INTERROGATION_QS[0]}`);
+    } else if (s.qi < INTERROGATION_QS.length) {
+      const q = INTERROGATION_QS[s.qi];
+      s.qi++;
+      await message.reply(`${ack}\n\n**Q${s.qi}.** ${q}`);
+    } else {
+      s.qi = 0; // loop back around after the verdict
+      await message.reply(`${ack}\n\n${pick(INTERROGATION_VERDICTS)}`);
+    }
+  },
+
+  // Mode 23: CustomerSupport — endless absurd troubleshooting for a product
+  // they never bought; every step needs their confirmation.
+  async CustomerSupport(message, entry) {
+    const s = entry.state;
+    s.step = s.step || 0;
+    if (s.step === 0 && isNo(message.content) && !isYes(message.content)) {
+      // They said it's NOT plugged in — gentle ribbing, still advance.
+      s.step = 1;
+      await message.reply(
+        'found the problem! ...just kidding. please plug it in, then reply **YES**. 🔌'
+      );
+      return;
+    }
+    if (s.step < SUPPORT_STEPS.length) {
+      const step = SUPPORT_STEPS[s.step];
+      s.step++;
+      await message.reply(step);
+    } else {
+      s.step = 0; // loop the closer / restart the saga
+      await message.reply(SUPPORT_CLOSER);
+    }
+  },
+
+  // Mode 24: GuessNumber — a rigged guessing game they can never win.
+  async GuessNumber(message, entry) {
+    const s = entry.state;
+    s.guesses = s.guesses || 0;
+    const hasNumber = /\d/.test(message.content);
+    if (!hasNumber) {
+      await reactSafe(message, '🤨');
+      await message.reply("that's not a number but ok 😐 guess again. 1–10.");
+      return;
+    }
+    s.guesses++;
+    if (s.guesses >= 6) {
+      const fake = randInt(1, 10);
+      s.guesses = 0;
+      await message.reply(
+        `lmaooo it was ${fake}. 😌 you were NEVER getting that. wanna go again? guess a number 1–10.`
+      );
+      return;
+    }
+    await message.reply(pick(GUESS_HINTS));
+  },
+
+  // Mode 25: StoryTime — collaborative mad-libs built from their real words.
+  async StoryTime(message, entry) {
+    const s = entry.state;
+    s.answers = s.answers || [];
+    s.answers.push(fragmentOf(message.content, 30));
+
+    if (s.answers.length < STORY_PROMPTS.length) {
+      const next = STORY_PROMPTS[s.answers.length];
+      await message.reply(`got it ✍️ now give me **${next}**.`);
+      return;
+    }
+
+    const [noun, verb, adj, who, num, part] = s.answers;
+    s.answers = []; // reset so the next message starts a fresh story
+    await message.reply(
+      [
+        '📖 *ahem...*',
+        '',
+        `Once upon a time, a ${adj} ${noun} was ${verb} outside ${who}'s house. ` +
+          `Out of nowhere, ${num} more appeared! ${who} panicked and covered their ${part}. ` +
+          'Nobody knows why.',
+        '',
+        '*the end.* 🎭 honestly? oscar material. wanna write another? give me **a noun**.',
+      ].join('\n')
+    );
+  },
+
   // ---------------------------------------------------------------------------
-  // Mode 21: AutoRage — the automated ragebait gauntlet. Runs a curated
+  // Mode 26: AutoRage — the automated ragebait gauntlet. Runs a curated
   // sequence of the OTHER modes against the target, strictly ONE AT A TIME,
   // fully finishing each stage before advancing, then loops forever until
   // !stop. Each incoming target message drives the current stage; messages that
@@ -1052,6 +1265,41 @@ const MODE_LOOKUP = new Map(
   Object.keys(modes).map((name) => [name.toLowerCase(), name])
 );
 
+// Openers: dialog modes that START the conversation the moment they're
+// activated, instead of waiting for the victim to speak first. Each receives
+// the target's DM channel and the entry, and may seed entry.state.
+const MODE_OPENERS = {
+  async WrongNumber(dm, entry) {
+    const persona = pick(WRONG_NUMBER_PERSONAS);
+    entry.state.persona = persona;
+    entry.state.step = 0;
+    await dm.send(persona.hook);
+  },
+  async Interrogation(dm, entry) {
+    entry.state.qi = 1;
+    await dm.send(
+      `🕵️ before we go any further i have a few **standard questions**. answer honestly.\n\n**Q1.** ${INTERROGATION_QS[0]}`
+    );
+  },
+  async CustomerSupport(dm, entry) {
+    entry.state.step = 0;
+    await dm.send(
+      '🎧 Support ticket **#4471** opened! Hi, I see you\'re having trouble with your **Smart Toaster Pro™**. To start: is it currently plugged in? (reply **YES** or **NO**)'
+    );
+  },
+  async GuessNumber(dm, entry) {
+    entry.state.guesses = 0;
+    await dm.send("🎲 let's play a game 😈 i'm thinking of a number between 1 and 10. guess!");
+  },
+  async StoryTime(dm, entry) {
+    entry.state.answers = [];
+    await dm.send('📖 help me write a story! to start, give me **a noun**.');
+  },
+  async Therapist(dm, entry) {
+    await dm.send("👋 come in, sit down. so... tell me what's been on your mind lately.");
+  },
+};
+
 // -----------------------------------------------------------------------------
 // Owner command handling
 // -----------------------------------------------------------------------------
@@ -1091,9 +1339,10 @@ async function handleOwnerCommand(message) {
 
     // Confirm the target is reachable and pre-open a DM channel.
     let targetUser;
+    let targetDM;
     try {
       targetUser = await client.users.fetch(targetId);
-      await targetUser.createDM();
+      targetDM = await targetUser.createDM();
     } catch {
       await message.reply(
         `Couldn't reach a user with ID \`${targetId}\`. Do we share a server / can they receive DMs?`
@@ -1112,10 +1361,22 @@ async function handleOwnerCommand(message) {
     };
     activeModes.set(targetId, entry);
 
+    // Dialog modes open the conversation immediately with a hook.
+    const opener = MODE_OPENERS[canonical];
+    let openerNote = '';
+    if (opener) {
+      try {
+        await opener(targetDM, entry);
+        openerNote = ' (opener sent — it\'ll chat back & forth)';
+      } catch {
+        openerNote = ' (⚠️ couldn\'t send opener)';
+      }
+    }
+
     await message.reply(
       `✅ Activated **${canonical}** on **${nameFor(targetId)}** (\`${targetUser.tag}\`)` +
         (entry.args ? ` with args: \`${entry.args}\`` : '') +
-        '.'
+        `.${openerNote}`
     );
     return;
   }

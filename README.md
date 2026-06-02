@@ -120,12 +120,34 @@ a DM for the live list.
 | `MockingCase`     | Repeats their message back in `mOcKiNg SpOnGeBoB cAsE` 🤡.                 |
 | `OneUpper`        | Whatever they did, it did it harder/bigger. Content-aware.               |
 | `WrongName`       | Calls them the wrong name forever and ignores corrections.               |
-| `Therapist`       | "and how does that make you feel?" Detached-therapist energy.            |
 | `Ratio`           | Pure gen-z ragebait: `L + ratio + you fell off` 💀.                       |
 | `FakeMod`         | Escalating fake rule warnings → fake ban countdown → "just kidding 😘".   |
 | `GhostQuote`      | "Reminds" them of unhinged things they never said.                       |
 | `UmActually`      | Insufferable pedant: "well *technically* you're wrong" 🤓.                |
 | `AutoRage`        | **Automated gauntlet:** cycles through the other modes one at a time, finishing each before the next, then loops until `!stop`. |
+
+### 💬 Dialog modes (actual conversations)
+
+These are the good ones — they **open the conversation themselves** (the bot
+messages first) and then **branch on what the victim actually says**, so it's a
+real multi-turn back-and-forth, not disconnected one-liners.
+
+| Name              | Behavior                                                                 |
+| ----------------- | ------------------------------------------------------------------------ |
+| `WrongNumber`     | Opens as a "wrong number" texter who refuses to accept it, then befriends them and keeps the chat going with questions. |
+| `Interrogation`   | Asks escalating "standard questions", acknowledges each answer, then delivers a verdict — and loops. |
+| `CustomerSupport` | Endless absurd troubleshooting for a product they never bought; every step needs their reply. |
+| `GuessNumber`     | A rigged guessing game with contradictory hints they can never win.      |
+| `StoryTime`       | Collaborative mad-libs — asks for a noun/verb/etc. one at a time, then reads back an absurd story built from **their words**. |
+| `Therapist`       | Detached therapist that **follows up on what they said** and keeps probing. |
+
+Because they're real conversations, dialog modes are **not** part of `AutoRage`
+(which switches modes every message). Run them on their own:
+
+```
+!troll David WrongNumber
+!troll David CustomerSupport
+```
 
 ### How content-awareness works
 
