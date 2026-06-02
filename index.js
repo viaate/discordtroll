@@ -799,11 +799,12 @@ const modes = {
   },
 
   // ---------------------------------------------------------------------------
-  // Mode 9: AggressiveSponsor — every 4th message becomes a sponsor read.
+  // Mode 9: AggressiveSponsor — fires on the FIRST message, then every 4th
+  // after (1st, 5th, 9th…), ignoring their text in between.
   // ---------------------------------------------------------------------------
   async AggressiveSponsor(message, entry) {
     entry.state.count = (entry.state.count || 0) + 1;
-    if (entry.state.count % 4 !== 0) return; // stay quiet otherwise
+    if (entry.state.count % 4 !== 1) return; // quiet on 2nd/3rd/4th, etc.
 
     const kw = keywordOf(message.content);
     const ad = pick(SPONSOR_READS);
@@ -1234,9 +1235,6 @@ const modes = {
           args: entry.args, // pass through any args (e.g. WordSpammer word)
           state: makeState(),
         };
-        // AggressiveSponsor only fires on its 4th message; pre-seed the counter
-        // so it lands on the very first message inside the gauntlet.
-        if (stage.mode === 'AggressiveSponsor') child.state.count = 3;
         // Keep the gauntlet snappy: trim PhantomTyper's 2-min wait to ~12s.
         if (stage.mode === 'PhantomTyper') child.state.phantomMs = 12000;
         st.child = child;
