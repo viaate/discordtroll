@@ -19,6 +19,9 @@ import {
   GatewayIntentBits,
   Partials,
   ChannelType,
+  REST,
+  Routes,
+  SlashCommandBuilder,
 } from 'discord.js';
 
 // -----------------------------------------------------------------------------
@@ -311,6 +314,18 @@ const HOSTAGE_RIDDLES = [
     riddle: 'What has hands but cannot clap?',
     answers: ['clock', 'a clock'],
   },
+];
+
+// Gross-but-harmless prefixes for the /usernamegenerator "cover" command.
+// Kept to toilet-humor tier on purpose — funny enough to sell the bot to
+// friends, tame enough not to trip Discord's moderation.
+const USERNAME_PREFIXES = [
+  'Poopy', 'Stinky', 'Smelly', 'Crusty', 'Moldy', 'Sweaty', 'Greasy',
+  'Soggy', 'Musty', 'Funky', 'Rancid', 'Gassy', 'Slimy', 'Booger',
+  'Snotty', 'Sticky', 'Clammy', 'Swampy', 'Grubby', 'Nasty', 'Putrid',
+  'Festering', 'Toe-Cheese', 'Dumpster', 'Sewage', 'Diaper', 'Mucus',
+  'Earwax', 'Belly-Button', 'Gremlin', 'Goblin', 'Squelchy', 'Yeasty',
+  'Crud', 'Scabby', 'Flatulent', 'Damp', 'Oozy', 'Whiffy', 'Goopy',
 ];
 
 // Curated order for the AutoRage gauntlet. `hits` = how many of the target's
@@ -883,12 +898,80 @@ async function handleOwnerCommand(message) {
 }
 
 // -----------------------------------------------------------------------------
+// Slash commands
+//
+// /usernamegenerator is the innocent-looking "cover" feature: it just bolts a
+// gross prefix onto whatever name the user types. This is what makes the bot
+// look like a harmless novelty toy worth inviting.
+// -----------------------------------------------------------------------------
+
+const SLASH_COMMANDS = [
+  new SlashCommandBuilder()
+    .setName('usernamegenerator')
+    .setDescription('Generate 10 totally legit, cool username ideas from your name!')
+    .addStringOption((option) =>
+      option
+        .setName('input')
+        .setDescription('Your name or base username (e.g. Olivia)')
+        .setRequired(true)
+        .setMaxLength(40)
+    )
+    .toJSON(),
+];
+
+// Push the command definitions to Discord. Global commands also show up in DMs
+// with the bot by default, which is exactly what we want.
+async function registerSlashCommands(appId) {
+  const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+  try {
+    await rest.put(Routes.applicationCommands(appId), { body: SLASH_COMMANDS });
+    console.log(`[READY] Registered ${SLASH_COMMANDS.length} slash command(s).`);
+  } catch (err) {
+    console.error('[slash] Failed to register commands:', err);
+  }
+}
+
+function generateUsernames(input) {
+  const clean = input.replace(/\s+/g, ' ').trim() || 'You';
+  return shuffle(USERNAME_PREFIXES)
+    .slice(0, 10)
+    .map((prefix, i) => `**${i + 1}.** ${prefix} ${clean}`);
+}
+
+// -----------------------------------------------------------------------------
 // Gateway events
 // -----------------------------------------------------------------------------
 
-client.once('clientReady', (c) => {
+client.once('clientReady', async (c) => {
   console.log(`[READY] Logged in as ${c.user.tag}. Owner: ${OWNER_ID}`);
   console.log(`[READY] ${Object.keys(modes).length} troll modes loaded.`);
+  await registerSlashCommands(c.user.id);
+});
+
+client.on('interactionCreate', async (interaction) => {
+  try {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'usernamegenerator') return;
+
+    const input = interaction.options.getString('input', true);
+    const names = generateUsernames(input);
+    await interaction.reply(
+      [
+        `✨ Here are 10 fresh username ideas for **${input.trim()}**:`,
+        '',
+        ...names,
+        '',
+        '_Pick your favorite!_ 😎',
+      ].join('\n')
+    );
+  } catch (err) {
+    console.error('[interactionCreate] handler error:', err);
+    if (interaction.isRepliable() && !interaction.replied) {
+      interaction
+        .reply({ content: 'Something went wrong generating names. Try again!', ephemeral: true })
+        .catch(() => {});
+    }
+  }
 });
 
 client.on('messageCreate', async (message) => {

@@ -99,6 +99,19 @@ strictly runs **one mode at a time**, waiting for long sequences (SlowMo,
 LoadingBar, WordSpammer, PhantomTyper) to fully finish before starting the next.
 `!status` shows which sub-mode is currently running.
 
+## Slash Command: `/usernamegenerator`
+
+Anyone who shares a server with the bot (or DMs it) can run:
+
+```
+/usernamegenerator input:Olivia
+```
+
+…and get back 10 "username ideas" that bolt a silly prefix onto their name
+(e.g. `Poopy Olivia`, `Stinky Olivia`). It's a harmless novelty command — and a
+convenient reason to get people to add the bot. Global slash commands can take
+up to an hour to appear the first time after the bot starts.
+
 ## Notes & Safety
 
 - All long-running loops (`SlowMo`, `PhantomTyper`, `LoadingBar`, `WordSpammer`)
