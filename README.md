@@ -40,8 +40,10 @@ npm start
 | ----------------------------------------- | --------------------------------------------------- |
 | `!troll <David\|ID> <ModeName> [args]`    | Activate a mode against a user.                     |
 | `!stop <David\|ID>`                        | Clear that user's mode (kills timers).              |
-| `!status`                                  | List every active troll + who you're spying on.     |
+| `!status`                                  | List active trolls + who you're spying/puppeting.   |
 | `!spy <David\|ID>`                         | Toggle live mirroring of a victim's DMs (both ways).|
+| `!say <David\|ID> <message>`               | Send one message to a user **as the bot**.          |
+| `!puppet <David\|ID>`                      | Talk live as the bot — then just type. `!puppet off`.|
 | `!help`                                    | Show every command (owner only).                    |
 
 Mode names are case-insensitive. Example:
@@ -78,6 +80,14 @@ line wrapped in a code block so it's easy to read:
 
 Run `!spy David` again to turn it off. (Live message edits — e.g. SlowMo /
 LoadingBar — are not mirrored, to avoid flooding your DMs.)
+
+### Talking as the bot
+
+- `!say David hey what's up` — fires off a single message to David as the bot.
+- `!puppet David` — enters live puppet mode: from then on, **anything you type
+  that isn't a `!command` goes straight to David as the bot**, and their replies
+  mirror back to you (spy is auto-enabled). Auto-troll modes are paused for the
+  person you're puppeting so the bot never talks over you. `!puppet off` exits.
 
 > The bot can only DM a user it shares a server with (and who allows DMs).
 

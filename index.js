@@ -68,6 +68,10 @@ const activeModes = new Map();
 // Targets whose DMs (both directions) are being mirrored to the owner.
 const spying = new Set();
 
+// When set, any plain (non-command) message the owner types is sent to this
+// target AS the bot — a live puppet conversation.
+let puppetTarget = null;
+
 // Friendly name -> user ID shortcuts so you can type `David` instead of an ID.
 // Add more here any time.
 const USER_ALIASES = new Map([
@@ -99,6 +103,25 @@ async function relayToOwner(text) {
     await owner.send('```\n' + clipped + '\n```');
   } catch {
     /* owner unreachable; ignore */
+  }
+}
+
+// Send a message to a target AS the bot. Confirms with a ✅ react on the
+// owner's source message (the outgoing spy relay shows the delivered text).
+async function sendAsBot(targetId, text, ownerMessage) {
+  try {
+    const user = await client.users.fetch(targetId);
+    const dm = await user.createDM();
+    await dm.send(text);
+    if (ownerMessage) await ownerMessage.react('✅').catch(() => {});
+    return true;
+  } catch {
+    if (ownerMessage) {
+      await ownerMessage
+        .reply(`❌ Couldn't DM **${nameFor(targetId)}**.`)
+        .catch(() => {});
+    }
+    return false;
   }
 }
 
@@ -462,12 +485,12 @@ const modes = {
     const kw = keywordOf(message.content);
     const burns = [
       `**Source?** 📚`,
-      `"${kw}"? citation needed. 📑`,
+      `**${kw}**? citation needed. 📑`,
       `that's a strawman. objection. 🙅`,
       `1️⃣ false premise 2️⃣ no evidence 3️⃣ refuted ⚖️`,
       `peer-reviewed source or it didn't happen.`,
       `**Counterpoint:** no. 🎤`,
-      `your "${kw}" argument is non-falsifiable. try again.`,
+      `your **${kw}** argument is non-falsifiable. try again.`,
       `correlation ≠ causation. do better. 🤓`,
     ];
     await reactSafe(message, '🤓');
@@ -485,7 +508,7 @@ const modes = {
       const targetId = message.author.id;
       // Build a short confusing reveal around a word the target actually used.
       const kw = keywordOf(message.content);
-      const sentence = `wait... "${kw}"... or the *other* "${kw}"...? 🤨`;
+      const sentence = `wait... ${kw}... or the *other* ${kw}...? 🤨`;
       const words = sentence.split(' ');
 
       const sent = await message.reply(words[0]);
@@ -561,7 +584,7 @@ const modes = {
     // message, so the jab is derived from their content rather than canned.
     const kw = keywordOf(message.content);
     await message.reply(
-      `*${kw}\n*(Pretty sure you misspelled "${kw}" there. ${pick(TYPO_SMUG_NOTES)})*`
+      `*${kw}\n*(Pretty sure you misspelled that. ${pick(TYPO_SMUG_NOTES)})*`
     );
   },
 
@@ -591,7 +614,7 @@ const modes = {
     try {
       const targetId = message.author.id;
       // Label the "computation" with a quote of their actual message.
-      const label = `Analyzing your message: "${fragmentOf(message.content, 40)}"`;
+      const label = `Analyzing your message: ${fragmentOf(message.content, 40)}`;
       const renderBar = (percent) => {
         const filled = Math.round(percent / 10);
         const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
@@ -664,7 +687,7 @@ const modes = {
 
     const kw = keywordOf(message.content);
     const ad = pick(SPONSOR_READS);
-    await message.reply(`"${kw}"? anyway — ${ad.pitch} code **${ad.code}** 🤑`);
+    await message.reply(`${kw}? anyway — ${ad.pitch} code **${ad.code}** 🤑`);
   },
 
   // ---------------------------------------------------------------------------
@@ -823,11 +846,11 @@ const modes = {
   async OneUpper(message, entry) {
     const kw = keywordOf(message.content);
     const lines = [
-      `oh you "${kw}"? cute. i did that in middle school.`,
-      `that's nothing. i "${kw}"'d for 9 hours straight once.`,
-      `"${kw}"? amateur hour. ask literally anyone.`,
+      `oh you **${kw}**? cute. i did that in middle school.`,
+      `that's nothing. i **${kw}**'d for 9 hours straight once.`,
+      `**${kw}**? amateur hour. ask literally anyone.`,
       `did the same but bigger and everyone clapped 👏`,
-      `funny, i invented "${kw}" actually.`,
+      `funny, i invented **${kw}** actually.`,
       `wow congrats 🙄 i do that before breakfast.`,
     ];
     await message.reply(pick(lines));
@@ -1107,6 +1130,43 @@ async function handleOwnerCommand(message) {
     return;
   }
 
+  if (cmd === 'say') {
+    const targetId = resolveTarget(rest[0]);
+    const text = rest.slice(1).join(' ');
+    if (!targetId || !text) {
+      await message.reply('Usage: `!say <David|ID> <message>`');
+      return;
+    }
+    await sendAsBot(targetId, text, message);
+    return;
+  }
+
+  if (cmd === 'puppet') {
+    const arg = rest[0];
+    if (!arg || arg.toLowerCase() === 'off') {
+      if (puppetTarget) {
+        const was = nameFor(puppetTarget);
+        puppetTarget = null;
+        await message.reply(`🎭 Puppet mode OFF (was **${was}**).`);
+      } else {
+        await message.reply('Usage: `!puppet <David|ID>` (then just type to talk)');
+      }
+      return;
+    }
+    const targetId = resolveTarget(arg);
+    if (!targetId) {
+      await message.reply(`\`${arg}\` isn't a known alias or valid user ID.`);
+      return;
+    }
+    puppetTarget = targetId;
+    spying.add(targetId); // so their replies mirror back to you
+    await message.reply(
+      `🎭 Puppet mode ON for **${nameFor(targetId)}**. Type normally to talk as the bot; ` +
+        'their replies mirror here. Send `!puppet off` to stop.'
+    );
+    return;
+  }
+
   if (cmd === 'status') {
     if (activeModes.size === 0 && spying.size === 0) {
       await message.reply('No active trolls right now. A peaceful kingdom.');
@@ -1124,6 +1184,7 @@ async function handleOwnerCommand(message) {
     for (const id of spying) {
       if (!activeModes.has(id)) lines.push(`• **${nameFor(id)}** → (spy only) 👀`);
     }
+    if (puppetTarget) lines.push(`• **${nameFor(puppetTarget)}** → 🎭 puppet`);
     await message.reply(
       `**Active (${lines.length}):**\n${lines.join('\n')}`
     );
@@ -1142,6 +1203,8 @@ async function handleOwnerCommand(message) {
         '`!stop <David|ID>` — stop a target',
         '`!status` — list active trolls + who you\'re spying on',
         '`!spy <David|ID>` — toggle mirroring a victim\'s DMs to you',
+        '`!say <David|ID> <message>` — send one message as the bot',
+        '`!puppet <David|ID>` — talk live as the bot (then just type); `!puppet off` to stop',
         '`!help` — this message',
         '',
         `**👥 Saved names:** ${aliasList}  _(type the name instead of the ID)_`,
@@ -1270,15 +1333,22 @@ client.on('messageCreate', async (message) => {
       );
     }
 
-    // Owner -> command parser.
+    // Owner -> command parser, or live puppet typing.
     if (message.author.id === OWNER_ID) {
-      await handleOwnerCommand(message);
+      if (message.content.trim().startsWith('!')) {
+        await handleOwnerCommand(message);
+      } else if (puppetTarget) {
+        await sendAsBot(puppetTarget, message.content, message);
+      }
       return;
     }
 
     // Anyone else -> run their active mode, if any.
     const entry = activeModes.get(message.author.id);
     if (!entry) return;
+
+    // If you're puppeting this person, don't let an auto-mode talk over you.
+    if (puppetTarget === message.author.id) return;
 
     const handler = modes[entry.mode];
     if (handler) await handler(message, entry);
