@@ -131,12 +131,35 @@ function teardown(entry) {
     }
   }
   entry.state._collectors.clear();
+
+  // AutoRage owns a child entry per stage; tear that down recursively too.
+  if (entry.state.child) {
+    teardown(entry.state.child);
+    entry.state.child = null;
+  }
 }
 
-// True while this exact entry is still the live mode for the target. Long
-// async loops call this between steps so a !stop (or a swapped mode) aborts.
-function isLive(targetId, entry) {
-  return !entry.state.stopped && activeModes.get(targetId) === entry;
+// True while this entry is still running. teardown() sets `stopped` whenever a
+// mode is stopped, replaced, or auto-disengages, so long async loops call this
+// between steps to know when to bail. Works for both top-level and AutoRage
+// child entries (which never live in the activeModes map).
+function isLive(entry) {
+  return !entry.state.stopped;
+}
+
+// Longest "interesting" word in a message — lets replies reference what the
+// target ACTUALLY said instead of falling back to canned text.
+function keywordOf(content) {
+  const words = (content || '').match(/[A-Za-z][A-Za-z'-]{2,}/g) || [];
+  if (!words.length) return 'that';
+  return words.sort((a, b) => b.length - a.length)[0];
+}
+
+// A trimmed, length-capped quote of the target's message.
+function fragmentOf(content, n = 60) {
+  const t = (content || '').trim().replace(/\s+/g, ' ');
+  if (!t) return 'that';
+  return t.length > n ? `${t.slice(0, n)}…` : t;
 }
 
 // -----------------------------------------------------------------------------
@@ -159,19 +182,40 @@ const SELF_DENIAL_LINES = [
   "I'm not reading from a script. Craig doesn't do scripts. Craig speaks from the heart.",
 ];
 
-const TYPO_CORRECTIONS = [
-  { fix: '*you\'re', note: 'it\'s a contraction of "you are", but go off' },
-  { fix: '*their', note: 'possessive. We covered this in like third grade' },
-  { fix: '*there', note: 'as in a place. Come on now' },
-  { fix: '*it\'s', note: 'apostrophe means "it is". Devastating miss' },
-  { fix: '*whom', note: 'object of the verb. Tragic, honestly' },
-  { fix: '*fewer', note: 'countable nouns take "fewer", not "less"' },
-  { fix: '*than', note: 'comparisons use "than", not "then". Yikes' },
-  { fix: '*affect', note: 'verb. The noun is "effect". Embarrassing for you' },
-  { fix: '*definitely', note: 'there is no "a" in it. None. Zero' },
-  { fix: '*lose', note: 'one "o". "Loose" is what your grammar is' },
-  { fix: '*should have', note: 'never "should of". That isn\'t a phrase' },
-  { fix: '*its', note: 'possessive, no apostrophe this time. Keep up' },
+// Homophone / common-confusion pairs for TypoGaslight. We scan the target's
+// ACTUAL message for any of these words and confidently "correct" each one to
+// its counterpart — bolding the swap — whether or not they were ever wrong.
+const CONFUSIONS = new Map([
+  ['their', "they're"],
+  ['there', 'their'],
+  ["they're", 'there'],
+  ['your', "you're"],
+  ["you're", 'your'],
+  ['its', "it's"],
+  ["it's", 'its'],
+  ['then', 'than'],
+  ['than', 'then'],
+  ['lose', 'loose'],
+  ['loose', 'lose'],
+  ['affect', 'effect'],
+  ['effect', 'affect'],
+  ['whose', "who's"],
+  ["who's", 'whose'],
+  ['were', "we're"],
+  ["we're", 'were'],
+  ['hear', 'here'],
+  ['here', 'hear'],
+  ['accept', 'except'],
+  ['except', 'accept'],
+]);
+
+const TYPO_SMUG_NOTES = [
+  'Fixed that for you.',
+  'You meant this. Common mistake, no worries.',
+  "Don't mention it — someone has to.",
+  'This is why we proofread.',
+  "I corrected it so you don't embarrass yourself further.",
+  "There. Now it's right.",
 ];
 
 // Deliberately obscure, unrelated unicode emoji for ReactSpam.
@@ -269,6 +313,26 @@ const HOSTAGE_RIDDLES = [
   },
 ];
 
+// Curated order for the AutoRage gauntlet. `hits` = how many of the target's
+// messages a stage consumes before advancing. Terminating modes (SlowMo,
+// LoadingBar, WordSpammer, PhantomTyper) use 1 because a single message kicks
+// off a self-contained sequence that AutoRage awaits to completion. The slow
+// real-time modes (DelayedGotcha) and the interactive HostageDelivery are left
+// out so the gauntlet keeps moving. References modes by name only, so it's safe
+// to declare before `modes` itself.
+const AUTO_RAGE_SEQUENCE = [
+  { mode: 'SelfDenial', hits: 2 },
+  { mode: 'TypoGaslight', hits: 2 },
+  { mode: 'DebateBro', hits: 1 },
+  { mode: 'InvertedEcho', hits: 2 },
+  { mode: 'AggressiveSponsor', hits: 1 },
+  { mode: 'SlowMo', hits: 1 },
+  { mode: 'ReactSpam', hits: 2 },
+  { mode: 'LoadingBar', hits: 1 },
+  { mode: 'WordSpammer', hits: 1 },
+  { mode: 'PhantomTyper', hits: 1 },
+];
+
 // -----------------------------------------------------------------------------
 // Mode implementations
 //
@@ -279,10 +343,15 @@ const HOSTAGE_RIDDLES = [
 
 const modes = {
   // ---------------------------------------------------------------------------
-  // Mode 1: SelfDenial — insist the bot is a human named Craig.
+  // Mode 1: SelfDenial — insist the bot is a human named Craig, and throw the
+  // target's own words back at them as "proof" that no robot would say that.
   // ---------------------------------------------------------------------------
   async SelfDenial(message, entry) {
-    await message.reply(pick(SELF_DENIAL_LINES));
+    const frag = fragmentOf(message.content, 70);
+    await message.reply(
+      `${pick(SELF_DENIAL_LINES)}\n\n…and honestly? A *robot* would never type "${frag}". ` +
+        `That is pure, unfiltered, human Craig energy and you know it.`
+    );
   },
 
   // ---------------------------------------------------------------------------
@@ -294,13 +363,15 @@ const modes = {
         ? `${message.content.slice(0, 80)}…`
         : message.content || '[your message]';
 
+    // Anchor every contention to a real word from THEIR message.
+    const kw = keywordOf(message.content);
     const contentions = shuffle([
-      'Your claim rests on an **unstated premise** that you have conveniently failed to justify.',
-      'You have committed a textbook **appeal to emotion**, which I, regrettably, must dismantle.',
-      'The **burden of proof** lies with the affirmative — that is *you* — and you have not met it.',
-      'There is a glaring **false dichotomy** lurking beneath your phrasing that I cannot ignore.',
-      'Your reasoning is **non-falsifiable**, and therefore not even wrong, which is worse than wrong.',
-      'You are conflating **correlation with causation** in a way that would make my debate coach weep.',
+      `Your invocation of "**${kw}**" rests on an **unstated premise** you conveniently failed to justify.`,
+      `By leaning on "**${kw}**", you commit a textbook **appeal to emotion**, which I must dismantle.`,
+      `The **burden of proof** for your claim about "**${kw}**" lies with *you*, and you have not met it.`,
+      `Your framing of "**${kw}**" is a glaring **false dichotomy** that I cannot in good conscience ignore.`,
+      `Your reasoning around "**${kw}**" is **non-falsifiable**, and therefore not even wrong — worse than wrong.`,
+      `You are conflating "**${kw}**" with its own cause in a flagrant **correlation-causation** error.`,
     ]).slice(0, 3);
 
     const rebuttal = [
@@ -329,8 +400,11 @@ const modes = {
     entry.state.busy = true;
     try {
       const targetId = message.author.id;
+      // Build the confusing reveal around a word the target actually used.
+      const kw = keywordOf(message.content);
       const sentence =
-        'wait... so... if the spoon... was never... actually... in the drawer... then... who... has been... stirring... my coffee... this whole... time?';
+        `wait... so... when you said... "${kw}"... did you... actually... mean... "${kw}"... ` +
+        `or... the *other*... "${kw}"... because... now... i am... genuinely... not... so... sure...`;
       const words = sentence.split(' ');
 
       const sent = await message.reply(words[0]);
@@ -338,7 +412,7 @@ const modes = {
 
       for (let i = 1; i < words.length; i++) {
         await sleep(2500); // exactly 2.5s between edits to dodge rate limits
-        if (!isLive(targetId, entry)) return;
+        if (!isLive(entry)) return;
         current += ` ${words[i]}`;
         await sent.edit(current);
       }
@@ -363,11 +437,11 @@ const modes = {
       await channel.sendTyping();
       while (Date.now() < deadline) {
         await sleep(8000);
-        if (!isLive(targetId, entry)) return;
+        if (!isLive(entry)) return;
         await channel.sendTyping();
       }
 
-      if (!isLive(targetId, entry)) return;
+      if (!isLive(entry)) return;
       await channel.send(pick(['.', 'k']));
     } finally {
       entry.state.busy = false;
@@ -375,11 +449,38 @@ const modes = {
   },
 
   // ---------------------------------------------------------------------------
-  // Mode 5: TypoGaslight — "correct" a typo the target never made.
+  // Mode 5: TypoGaslight — scan the target's ACTUAL message for homophones
+  // (their/there/they're, your/you're, its/it's, then/than, ...), rewrite the
+  // whole message swapping each one to its "correct" counterpart in **bold**,
+  // and hand it back as if they fumbled — even when they were right.
   // ---------------------------------------------------------------------------
   async TypoGaslight(message, entry) {
-    const correction = pick(TYPO_CORRECTIONS);
-    await message.reply(`${correction.fix}\n*(${correction.note}.)*`);
+    let found = false;
+    // Match words including internal apostrophes (so "they're", "it's" stay one
+    // token) but not surrounding quotes/punctuation.
+    const rewritten = message.content.replace(
+      /[A-Za-z]+(?:'[A-Za-z]+)?/g,
+      (word) => {
+        const lower = word.toLowerCase();
+        if (!CONFUSIONS.has(lower)) return word;
+        found = true;
+        let rep = CONFUSIONS.get(lower);
+        if (/^[A-Z]/.test(word)) rep = rep.charAt(0).toUpperCase() + rep.slice(1);
+        return `**${rep}**`; // bold the "correction" via Discord formatting
+      }
+    );
+
+    if (found) {
+      await message.reply(`${rewritten}\n*(${pick(TYPO_SMUG_NOTES)})*`);
+      return;
+    }
+
+    // No homophone to pounce on — still gaslight using a real word from THEIR
+    // message, so the jab is derived from their content rather than canned.
+    const kw = keywordOf(message.content);
+    await message.reply(
+      `*${kw}\n*(Pretty sure you misspelled "${kw}" there. ${pick(TYPO_SMUG_NOTES)})*`
+    );
   },
 
   // ---------------------------------------------------------------------------
@@ -389,7 +490,7 @@ const modes = {
     const targetId = message.author.id;
     const chosen = shuffle(OBSCURE_EMOJIS).slice(0, 5);
     for (const emoji of chosen) {
-      if (!isLive(targetId, entry)) return;
+      if (!isLive(entry)) return;
       try {
         await message.react(emoji);
       } catch {
@@ -407,10 +508,12 @@ const modes = {
     entry.state.busy = true;
     try {
       const targetId = message.author.id;
+      // Label the "computation" with a quote of their actual message.
+      const label = `Analyzing your message: "${fragmentOf(message.content, 40)}"`;
       const renderBar = (percent) => {
         const filled = Math.round(percent / 10);
         const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
-        return `\`\`\`\n[${bar}] ${percent}%\n\`\`\``;
+        return `\`\`\`\n${label}\n[${bar}] ${percent}%\n\`\`\``;
       };
 
       const sent = await message.reply(renderBar(0));
@@ -419,18 +522,18 @@ const modes = {
       let percent = 0;
       while (percent < 90) {
         await sleep(5000);
-        if (!isLive(targetId, entry)) return;
+        if (!isLive(entry)) return;
         percent = Math.min(90, percent + randInt(8, 20));
         await sent.edit(renderBar(percent));
       }
 
       // Nudge to 99 and get stuck there.
       await sleep(5000);
-      if (!isLive(targetId, entry)) return;
+      if (!isLive(entry)) return;
       await sent.edit(renderBar(99));
 
       await sleep(30000); // stuck at 99% for 30 seconds
-      if (!isLive(targetId, entry)) return;
+      if (!isLive(entry)) return;
       await sent.edit(
         '```\nERROR: User intelligence too low to complete calculation.\n```'
       );
@@ -454,9 +557,13 @@ const modes = {
     trackTimeout(
       entry,
       async () => {
-        if (!isLive(targetId, entry)) return;
+        if (!isLive(entry)) return;
         try {
-          await original.reply(pick(GOTCHA_LINES));
+          // Quote their original message back so the late reply clearly
+          // references what they actually said earlier.
+          await original.reply(
+            `> ${fragmentOf(original.content, 80)}\n\n${pick(GOTCHA_LINES)}`
+          );
         } catch {
           /* original may be gone; ignore */
         }
@@ -473,14 +580,16 @@ const modes = {
     entry.state.count = (entry.state.count || 0) + 1;
     if (entry.state.count % 4 !== 0) return; // stay quiet otherwise
 
+    const kw = keywordOf(message.content);
     const ad = pick(SPONSOR_READS);
     const body = [
+      `Hold on — "${kw}"? Genuinely fascinating. But you know what's *more* fascinating?`,
+      '',
       ad.pitch,
       '',
       `And here's the kicker — use code **${ad.code}** at checkout for a frankly *irresponsible* discount.`,
       '',
-      'Anyway. You were saying something. Probably. Use code ' +
-        `**${ad.code}**.`,
+      `Anyway. "${kw}". Wild stuff. Use code **${ad.code}**.`,
     ].join('\n');
 
     await message.reply(body);
@@ -595,12 +704,12 @@ const modes = {
 
       const MAX_MESSAGES = 15; // safety hardcap so the token doesn't get banned
       for (let i = 0; i < MAX_MESSAGES; i++) {
-        if (!isLive(targetId, entry)) return;
+        if (!isLive(entry)) return;
         await channel.send(word);
         await sleep(3000); // every 3 seconds
       }
 
-      if (isLive(targetId, entry)) {
+      if (isLive(entry)) {
         await channel.send('Spam sequence complete.');
       }
       // Auto-disengage the mode.
@@ -611,6 +720,52 @@ const modes = {
       }
     } finally {
       entry.state.busy = false;
+    }
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 13: AutoRage — the automated ragebait gauntlet. Runs a curated
+  // sequence of the OTHER modes against the target, strictly ONE AT A TIME,
+  // fully finishing each stage before advancing, then loops forever until
+  // !stop. Each incoming target message drives the current stage; messages that
+  // arrive while a stage is mid-run are ignored (true serialization).
+  // ---------------------------------------------------------------------------
+  async AutoRage(message, entry) {
+    const st = entry.state;
+    if (st.stopped || st.stageBusy) return; // serialize: one stage at a time
+    st.stageBusy = true;
+    try {
+      if (st.index === undefined) st.index = 0;
+
+      // Spin up a fresh child sub-mode entry for the current stage if needed.
+      if (!st.child) {
+        const stage = AUTO_RAGE_SEQUENCE[st.index];
+        st.hitsRemaining = stage.hits;
+        const child = {
+          mode: stage.mode,
+          args: entry.args, // pass through any args (e.g. WordSpammer word)
+          state: makeState(),
+        };
+        // AggressiveSponsor only fires on its 4th message; pre-seed the counter
+        // so it lands on the very first message inside the gauntlet.
+        if (stage.mode === 'AggressiveSponsor') child.state.count = 3;
+        st.child = child;
+      }
+
+      const child = st.child;
+      const handler = modes[child.mode];
+      if (handler) await handler(message, child); // wait for the stage to finish
+
+      if (st.stopped) return; // stopped mid-stage; don't advance or rearm
+
+      st.hitsRemaining -= 1;
+      if (st.hitsRemaining <= 0) {
+        teardown(child); // clean up this stage's timers/collectors
+        st.child = null;
+        st.index = (st.index + 1) % AUTO_RAGE_SEQUENCE.length; // loop forever
+      }
+    } finally {
+      st.stageBusy = false;
     }
   },
 };
@@ -709,12 +864,13 @@ async function handleOwnerCommand(message) {
       await message.reply('No active trolls right now. A peaceful kingdom.');
       return;
     }
-    const lines = [...activeModes.entries()].map(
-      ([id, entry]) =>
-        `• \`${id}\` → **${entry.mode}**${
-          entry.args ? ` (args: \`${entry.args}\`)` : ''
-        }`
-    );
+    const lines = [...activeModes.entries()].map(([id, entry]) => {
+      let extra = entry.args ? ` (args: \`${entry.args}\`)` : '';
+      if (entry.mode === 'AutoRage' && entry.state.child) {
+        extra += ` (now running: **${entry.state.child.mode}**)`;
+      }
+      return `• \`${id}\` → **${entry.mode}**${extra}`;
+    });
     await message.reply(
       `**Active trolls (${activeModes.size}):**\n${lines.join('\n')}`
     );
