@@ -36,42 +36,80 @@ npm start
 
 ## Owner Commands (DM the bot)
 
-| Command                                       | Effect                                  |
-| --------------------------------------------- | --------------------------------------- |
-| `!troll <TargetUserID> <ModeName> [args]`     | Activate a mode against a user.         |
-| `!stop <TargetUserID>`                         | Clear that user's mode (kills timers).  |
-| `!status`                                      | List every active troll.                |
+| Command                                   | Effect                                              |
+| ----------------------------------------- | --------------------------------------------------- |
+| `!troll <David\|ID> <ModeName> [args]`    | Activate a mode against a user.                     |
+| `!stop <David\|ID>`                        | Clear that user's mode (kills timers).              |
+| `!status`                                  | List every active troll + who you're spying on.     |
+| `!spy <David\|ID>`                         | Toggle live mirroring of a victim's DMs (both ways).|
+| `!help`                                    | Show every command (owner only).                    |
 
 Mode names are case-insensitive. Example:
 
 ```
-!troll 123456789012345678 SlowMo
-!troll 123456789012345678 WordSpammer banana
-!stop 123456789012345678
+!troll David SlowMo
+!troll David WordSpammer banana
+!spy David
+!stop David
 ```
+
+### Name aliases
+
+Type a saved name instead of a long user ID. Edit the `USER_ALIASES` map near
+the top of `index.js` to add your own:
+
+```js
+const USER_ALIASES = new Map([
+  ['david', '936763714110107709'],
+]);
+```
+
+### Spy mode
+
+`!spy David` mirrors everything in David's DM with the bot to **your** DMs, each
+line wrapped in a code block so it's easy to read:
+
+```
+[David ➜ BOT] this sucks
+```
+```
+[BOT ➜ David] *this rocks
+```
+
+Run `!spy David` again to turn it off. (Live message edits — e.g. SlowMo /
+LoadingBar — are not mirrored, to avoid flooding your DMs.)
 
 > The bot can only DM a user it shares a server with (and who allows DMs).
 
-## The 13 Modes
+## The Modes
 
 Most text modes are **content-aware** — they parse the target's actual message
-and build a customized reply, rather than spitting canned lines.
+and build a customized reply, rather than spitting canned lines. Run `!help` in
+a DM for the live list.
 
-| #  | Name              | Behavior                                                                 |
-| -- | ----------------- | ------------------------------------------------------------------------ |
-| 1  | `SelfDenial`      | Insists it's a human named Craig **and quotes their own words** as "proof". |
-| 2  | `DebateBro`       | Formal 3-contention rebuttal whose points **reference a keyword they used**. |
-| 3  | `SlowMo`          | Reveals a confusing sentence **built around one of their words**, 2.5s edits. |
-| 4  | `PhantomTyper`    | Fakes the typing indicator for 2 minutes, then sends `.` / `k`.          |
-| 5  | `TypoGaslight`    | **Scans their message for homophones** (their/there/they're, your/you're, its/it's, then/than, …), rewrites it with each swap in **bold**, hands it back. |
-| 6  | `ReactSpam`       | Reacts to each message with 5 random obscure emojis, no text.            |
-| 7  | `LoadingBar`      | ASCII progress bar **labeled with their message** that stalls at 99% then errors. |
-| 8  | `DelayedGotcha`   | Ignores them, then **quotes their message** in a reply 30–60 minutes later. |
-| 9  | `AggressiveSponsor` | Every 4th message **pivots off a word they used** into a sponsored ad read. |
-| 10 | `HostageDelivery` | Holds their food order hostage behind a riddle (uses a collector).       |
-| 11 | `InvertedEcho`    | **Swaps words in their message** for antonyms to "correct" their opinion. |
-| 12 | `WordSpammer`     | Repeats a word every 3s, hard-capped at 15 messages. Optional `[word]`, else their last word. |
-| 13 | `AutoRage`        | **Automated gauntlet:** cycles through the other modes one at a time, finishing each before the next, then loops until `!stop`. |
+| Name              | Behavior                                                                 |
+| ----------------- | ------------------------------------------------------------------------ |
+| `SelfDenial`      | Indignant one-liners insisting it's a human named Craig + 😤 react.       |
+| `DebateBro`       | Short debate-bro burns ("**Source?** 📚") keyed off a word they used.     |
+| `SlowMo`          | Reveals a short confusing sentence **built around one of their words**, 2.5s edits. |
+| `PhantomTyper`    | Fakes the typing indicator (2 min), then sends `.` / `k`.                |
+| `TypoGaslight`    | **Scans for homophones** (their/there/they're…), rewrites the message with each swap in **bold**. |
+| `ReactSpam`       | Reacts to each message with 5 random obscure emojis, no text.            |
+| `LoadingBar`      | ASCII progress bar **labeled with their message** that stalls at 99% then errors. |
+| `DelayedGotcha`   | Ignores them, then **quotes their message** in a reply 30–60 min later.  |
+| `AggressiveSponsor` | Every 4th message **pivots off a word they used** into a one-line sponsor read. |
+| `HostageDelivery` | Holds their food order hostage behind a riddle (uses a collector).       |
+| `InvertedEcho`    | **Flips words in their message** to antonyms (sucks→rocks, stupid→genius). |
+| `WordSpammer`     | Repeats a word every 3s, capped at 15 messages. Optional `[word]`.       |
+| `MockingCase`     | Repeats their message back in `mOcKiNg SpOnGeBoB cAsE` 🤡.                 |
+| `OneUpper`        | Whatever they did, it did it harder/bigger. Content-aware.               |
+| `WrongName`       | Calls them the wrong name forever and ignores corrections.               |
+| `Therapist`       | "and how does that make you feel?" Detached-therapist energy.            |
+| `Ratio`           | Pure gen-z ragebait: `L + ratio + you fell off` 💀.                       |
+| `FakeMod`         | Escalating fake rule warnings → fake ban countdown → "just kidding 😘".   |
+| `GhostQuote`      | "Reminds" them of unhinged things they never said.                       |
+| `UmActually`      | Insufferable pedant: "well *technically* you're wrong" 🤓.                |
+| `AutoRage`        | **Automated gauntlet:** cycles through the other modes one at a time, finishing each before the next, then loops until `!stop`. |
 
 ### How content-awareness works
 

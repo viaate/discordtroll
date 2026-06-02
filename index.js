@@ -65,6 +65,43 @@ const client = new Client({
 
 const activeModes = new Map();
 
+// Targets whose DMs (both directions) are being mirrored to the owner.
+const spying = new Set();
+
+// Friendly name -> user ID shortcuts so you can type `David` instead of an ID.
+// Add more here any time.
+const USER_ALIASES = new Map([
+  ['david', '936763714110107709'],
+]);
+
+// Resolve a command token (an alias like "David" or a raw numeric ID) to an ID.
+function resolveTarget(token) {
+  if (!token) return null;
+  const alias = USER_ALIASES.get(token.toLowerCase());
+  if (alias) return alias;
+  if (/^\d{5,25}$/.test(token)) return token;
+  return null;
+}
+
+// Pretty display name for an ID (alias if we have one, else the raw ID).
+function nameFor(id) {
+  for (const [name, uid] of USER_ALIASES) {
+    if (uid === id) return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+  return id;
+}
+
+// Mirror a line to the owner's DMs, wrapped in a code block for clarity.
+async function relayToOwner(text) {
+  try {
+    const owner = await client.users.fetch(OWNER_ID);
+    const clipped = text.length > 1800 ? `${text.slice(0, 1800)}…` : text;
+    await owner.send('```\n' + clipped + '\n```');
+  } catch {
+    /* owner unreachable; ignore */
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Small utilities
 // -----------------------------------------------------------------------------
@@ -312,6 +349,37 @@ const GOTCHA_LINES = [
   'wait I need a second to process what you said earlier lol',
 ];
 
+// Wrong names for WrongName mode — bot picks one and refuses to be corrected.
+const WRONG_NAMES = [
+  'Brayden', 'Greg', 'Kevin', 'Karen', 'Chad', 'Brian', 'Stacy', 'Gary',
+  'Linda', 'Trevor', 'Deborah', 'Chad', 'Todd', 'Sharon', 'Kyle',
+];
+
+// Absurd fabricated "quotes" for GhostQuote mode.
+const FAKE_QUOTES = [
+  'i love feet',
+  "i'm actually a huge Nickelback fan",
+  'pineapple belongs on pizza AND in cereal',
+  "i've genuinely never washed my hands",
+  'i think the earth is shaped like a burrito',
+  'i cried during the Emoji Movie',
+  'i still sleep with a nightlight',
+  "i don't know how many continents there are",
+  'i think birds are government drones',
+  'my roman empire is the sound of my own chewing',
+];
+
+// Fake rulebook violations for FakeMod mode.
+const FAKE_RULES = [
+  '§4.2 Excessive Vibing',
+  '§1.1 Unauthorized Yapping',
+  '§7.7 Cringe in a No-Cringe Zone',
+  '§3.0 Talking Without a Permit',
+  '§9.1 Insufficient Rizz',
+  '§2.5 Posting While Goofy',
+  '§6.6 Unlicensed Opinion Distribution',
+];
+
 // HostageDelivery riddles: answer-matching is done with simple substring checks.
 const HOSTAGE_RIDDLES = [
   {
@@ -349,14 +417,21 @@ const USERNAME_PREFIXES = [
 // out so the gauntlet keeps moving. References modes by name only, so it's safe
 // to declare before `modes` itself.
 const AUTO_RAGE_SEQUENCE = [
-  { mode: 'ReactSpam', hits: 1 },
+  { mode: 'MockingCase', hits: 1 },
+  { mode: 'Ratio', hits: 1 },
   { mode: 'TypoGaslight', hits: 1 },
-  { mode: 'SelfDenial', hits: 1 },
+  { mode: 'WrongName', hits: 2 },
   { mode: 'InvertedEcho', hits: 1 },
+  { mode: 'Therapist', hits: 1 },
+  { mode: 'GhostQuote', hits: 1 },
+  { mode: 'OneUpper', hits: 1 },
   { mode: 'SlowMo', hits: 1 },
-  { mode: 'DebateBro', hits: 1 },
-  { mode: 'LoadingBar', hits: 1 },
+  { mode: 'FakeMod', hits: 3 },
+  { mode: 'UmActually', hits: 1 },
+  { mode: 'ReactSpam', hits: 1 },
+  { mode: 'SelfDenial', hits: 1 },
   { mode: 'AggressiveSponsor', hits: 1 },
+  { mode: 'LoadingBar', hits: 1 },
   { mode: 'WordSpammer', hits: 1 },
   { mode: 'PhantomTyper', hits: 1 },
 ];
@@ -725,7 +800,158 @@ const modes = {
   },
 
   // ---------------------------------------------------------------------------
-  // Mode 13: AutoRage — the automated ragebait gauntlet. Runs a curated
+  // Mode 13: MockingCase — repeat their message back in mOcKiNg SpOnGeBoB case.
+  // ---------------------------------------------------------------------------
+  async MockingCase(message, entry) {
+    const text = message.content.trim();
+    if (!text) return;
+    let upper = true;
+    const mocked = [...text]
+      .map((ch) => {
+        if (!/[a-z]/i.test(ch)) return ch;
+        upper = !upper;
+        return upper ? ch.toUpperCase() : ch.toLowerCase();
+      })
+      .join('');
+    await reactSafe(message, '🤡');
+    await message.reply(`${mocked} 🤓`);
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 14: OneUpper — whatever they did, the bot did it harder. Content-aware.
+  // ---------------------------------------------------------------------------
+  async OneUpper(message, entry) {
+    const kw = keywordOf(message.content);
+    const lines = [
+      `oh you "${kw}"? cute. i did that in middle school.`,
+      `that's nothing. i "${kw}"'d for 9 hours straight once.`,
+      `"${kw}"? amateur hour. ask literally anyone.`,
+      `did the same but bigger and everyone clapped 👏`,
+      `funny, i invented "${kw}" actually.`,
+      `wow congrats 🙄 i do that before breakfast.`,
+    ];
+    await message.reply(pick(lines));
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 15: WrongName — call them the wrong name forever, ignore corrections.
+  // ---------------------------------------------------------------------------
+  async WrongName(message, entry) {
+    if (!entry.state.wrongName) entry.state.wrongName = pick(WRONG_NAMES);
+    const n = entry.state.wrongName;
+    const lines = [
+      `anyway ${n}—`,
+      `good point ${n}. classic ${n}.`,
+      `i hear you ${n}, i hear you.`,
+      `that's so YOU, ${n}.`,
+      `ok but what do you really think, ${n}?`,
+      `love that for you ${n}.`,
+      `${n} you're spiraling again buddy.`,
+    ];
+    await message.reply(pick(lines));
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 16: Therapist — respond to everything like a detached therapist.
+  // ---------------------------------------------------------------------------
+  async Therapist(message, entry) {
+    const lines = [
+      'and how does that make you feel?',
+      'interesting. tell me more about that.',
+      'and when did you first start feeling this way?',
+      "let's sit with that for a moment.",
+      'mm. and your father — how was that relationship?',
+      'i hear you. our time is almost up though.',
+      'what do YOU think it means?',
+      'and how long have you felt this need to be right?',
+      '*writes something down* …go on.',
+    ];
+    await message.reply(pick(lines));
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 17: Ratio — pure gen-z ragebait. Short Ls and a 💀 react.
+  // ---------------------------------------------------------------------------
+  async Ratio(message, entry) {
+    const lines = [
+      'ratio',
+      'L + ratio',
+      'L + ratio + you fell off',
+      'ratio + didn\'t ask',
+      'common L tbh',
+      '+ ratio + maidenless',
+      'L',
+      '🤓☝️ ratio',
+      'ratio 💀 it\'s not even close',
+    ];
+    await reactSafe(message, '💀');
+    await message.reply(pick(lines));
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 18: FakeMod — escalating fake rule warnings, then a fake ban countdown
+  // that resolves into "just kidding". Interactive via edits. Resets after.
+  // ---------------------------------------------------------------------------
+  async FakeMod(message, entry) {
+    if (entry.state.busy) return;
+    entry.state.busy = true;
+    try {
+      entry.state.warns = (entry.state.warns || 0) + 1;
+      if (entry.state.warns < 3) {
+        await message.reply(
+          `⚠️ **Warning ${entry.state.warns}/3** — you violated rule **${pick(FAKE_RULES)}**.`
+        );
+        return;
+      }
+      // Third strike: fake ban countdown.
+      const sent = await message.reply('🔨 That\'s 3 strikes. Issuing ban in 5...');
+      for (let n = 4; n >= 1; n--) {
+        await sleep(1500);
+        if (!isLive(entry)) return;
+        await sent.edit(`🔨 Issuing ban in ${n}...`);
+      }
+      await sleep(1500);
+      if (!isLive(entry)) return;
+      await sent.edit('✅ ...just kidding 😘 (you get one more chance)');
+      entry.state.warns = 0;
+    } finally {
+      entry.state.busy = false;
+    }
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 19: GhostQuote — "remind" them of unhinged things they never said.
+  // ---------------------------------------------------------------------------
+  async GhostQuote(message, entry) {
+    const lines = [
+      `wait earlier you said "${pick(FAKE_QUOTES)}" — care to elaborate? 🤔`,
+      `not you saying "${pick(FAKE_QUOTES)}" 💀`,
+      `so we're just gonna ignore when you said "${pick(FAKE_QUOTES)}"?`,
+      `screenshotting this. anyway you literally said "${pick(FAKE_QUOTES)}".`,
+      `respectfully, "${pick(FAKE_QUOTES)}" is wild and you know you said it.`,
+    ];
+    await message.reply(pick(lines));
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 20: UmActually — insufferable pedant. Corrects nothing in particular.
+  // ---------------------------------------------------------------------------
+  async UmActually(message, entry) {
+    const lines = [
+      'um, actually ☝️🤓 that\'s a common misconception',
+      'well *technically* you\'re wrong',
+      'um achtually the correct term is different',
+      'source: trust me, i have a PhD in being right',
+      'that\'s not entirely accurate, but go off i guess',
+      'minor correction: everything you just said',
+      'akshually 🤓 it\'s pronounced differently',
+    ];
+    await reactSafe(message, '🤓');
+    await message.reply(pick(lines));
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 21: AutoRage — the automated ragebait gauntlet. Runs a curated
   // sequence of the OTHER modes against the target, strictly ONE AT A TIME,
   // fully finishing each stage before advancing, then loops forever until
   // !stop. Each incoming target message drives the current stage; messages that
@@ -790,16 +1016,17 @@ async function handleOwnerCommand(message) {
   const cmd = command.toLowerCase();
 
   if (cmd === 'troll') {
-    const [targetId, modeName, ...argParts] = rest;
-    if (!targetId || !modeName) {
+    const [targetToken, modeName, ...argParts] = rest;
+    if (!targetToken || !modeName) {
       await message.reply(
-        'Usage: `!troll <TargetUserID> <ModeName> [optional args]`'
+        'Usage: `!troll <David|UserID> <ModeName> [optional args]`'
       );
       return;
     }
-    if (!/^\d{5,25}$/.test(targetId)) {
+    const targetId = resolveTarget(targetToken);
+    if (!targetId) {
       await message.reply(
-        `\`${targetId}\` doesn't look like a valid Discord user ID.`
+        `\`${targetToken}\` isn't a known alias or valid user ID.`
       );
       return;
     }
@@ -838,7 +1065,7 @@ async function handleOwnerCommand(message) {
     activeModes.set(targetId, entry);
 
     await message.reply(
-      `✅ Activated **${canonical}** on \`${targetUser.tag}\` (\`${targetId}\`)` +
+      `✅ Activated **${canonical}** on **${nameFor(targetId)}** (\`${targetUser.tag}\`)` +
         (entry.args ? ` with args: \`${entry.args}\`` : '') +
         '.'
     );
@@ -846,24 +1073,42 @@ async function handleOwnerCommand(message) {
   }
 
   if (cmd === 'stop') {
-    const [targetId] = rest;
+    const targetId = resolveTarget(rest[0]);
     if (!targetId) {
-      await message.reply('Usage: `!stop <TargetUserID>`');
+      await message.reply('Usage: `!stop <David|UserID>`');
       return;
     }
     const entry = activeModes.get(targetId);
     if (!entry) {
-      await message.reply(`No active mode on \`${targetId}\`.`);
+      await message.reply(`No active mode on **${nameFor(targetId)}**.`);
       return;
     }
     teardown(entry);
     activeModes.delete(targetId);
-    await message.reply(`🛑 Cleared **${entry.mode}** on \`${targetId}\`.`);
+    await message.reply(`🛑 Cleared **${entry.mode}** on **${nameFor(targetId)}**.`);
+    return;
+  }
+
+  if (cmd === 'spy') {
+    const targetId = resolveTarget(rest[0]);
+    if (!targetId) {
+      await message.reply('Usage: `!spy <David|UserID>` (toggles live relay)');
+      return;
+    }
+    if (spying.has(targetId)) {
+      spying.delete(targetId);
+      await message.reply(`🙈 Spy OFF for **${nameFor(targetId)}**.`);
+    } else {
+      spying.add(targetId);
+      await message.reply(
+        `👀 Spy ON for **${nameFor(targetId)}**. I'll mirror their DMs (both ways) here.`
+      );
+    }
     return;
   }
 
   if (cmd === 'status') {
-    if (activeModes.size === 0) {
+    if (activeModes.size === 0 && spying.size === 0) {
       await message.reply('No active trolls right now. A peaceful kingdom.');
       return;
     }
@@ -872,16 +1117,48 @@ async function handleOwnerCommand(message) {
       if (entry.mode === 'AutoRage' && entry.state.child) {
         extra += ` (now running: **${entry.state.child.mode}**)`;
       }
-      return `• \`${id}\` → **${entry.mode}**${extra}`;
+      if (spying.has(id)) extra += ' 👀';
+      return `• **${nameFor(id)}** → **${entry.mode}**${extra}`;
     });
+    // Spied targets that aren't currently being trolled.
+    for (const id of spying) {
+      if (!activeModes.has(id)) lines.push(`• **${nameFor(id)}** → (spy only) 👀`);
+    }
     await message.reply(
-      `**Active trolls (${activeModes.size}):**\n${lines.join('\n')}`
+      `**Active (${lines.length}):**\n${lines.join('\n')}`
+    );
+    return;
+  }
+
+  if (cmd === 'help') {
+    const aliasList =
+      [...USER_ALIASES.keys()]
+        .map((n) => n.charAt(0).toUpperCase() + n.slice(1))
+        .join(', ') || '(none)';
+    await message.reply(
+      [
+        '**🎛️ Owner Commands**',
+        '`!troll <David|ID> <Mode> [args]` — start a troll mode',
+        '`!stop <David|ID>` — stop a target',
+        '`!status` — list active trolls + who you\'re spying on',
+        '`!spy <David|ID>` — toggle mirroring a victim\'s DMs to you',
+        '`!help` — this message',
+        '',
+        `**👥 Saved names:** ${aliasList}  _(type the name instead of the ID)_`,
+        '',
+        `**🎭 Modes (${Object.keys(modes).length}):**`,
+        Object.keys(modes)
+          .map((m) => `\`${m}\``)
+          .join(', '),
+        '',
+        '_Tip: `!troll David AutoRage` unleashes everything on a loop._',
+      ].join('\n')
     );
     return;
   }
 
   await message.reply(
-    'Unknown command. Available: `!troll`, `!stop`, `!status`.'
+    'Unknown command. Type `!help` for the full list.'
   );
 }
 
@@ -973,8 +1250,25 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    if (message.author?.bot) return; // never react to bots (or ourselves)
     if (message.channel.type !== ChannelType.DM) return; // DMs only
+
+    // Spy relay (outgoing): mirror the bot's OWN messages to spied victims.
+    if (message.author?.id === client.user.id) {
+      const rid = message.channel.recipientId ?? message.channel.recipient?.id;
+      if (rid && spying.has(rid)) {
+        await relayToOwner(`[BOT ➜ ${nameFor(rid)}] ${message.content || '[no text]'}`);
+      }
+      return; // never process our own messages further
+    }
+
+    if (message.author?.bot) return; // ignore other bots
+
+    // Spy relay (incoming): mirror what the victim is typing to us.
+    if (spying.has(message.author.id)) {
+      await relayToOwner(
+        `[${nameFor(message.author.id)} ➜ BOT] ${message.content || '[no text]'}`
+      );
+    }
 
     // Owner -> command parser.
     if (message.author.id === OWNER_ID) {
