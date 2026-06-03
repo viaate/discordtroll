@@ -4,8 +4,9 @@ node_modules/
 # Secrets
 .env
 
-# Private style dataset (never commit your message history)
+# Private message data (never commit your message history)
 my_style_dataset_reversed.txt
+guess_who_messages.txt
 
 # Logs
 *.log

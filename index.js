@@ -75,18 +75,47 @@ let STYLE_TOPIC_LINES = [];
 let STYLE_GHOST_LINES = [];
 // A short, fixed sample of real short texts used as few-shot brevity anchors.
 let STYLE_EXAMPLES_TEXT = '';
+// GuessWho game: [{ sender: 'Olivia' | 'David', text }], juiciest first.
+let GUESS_WHO = [];
+
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // One-word / pure-reaction lines that make poor conversation topics.
 const FILLER_LINE_RE =
   /^(lol|lmao+|lmfao+|haha+|hah|ok|okay|k+|yeah?|ya|nah|no|yes|yep|yup|bruh|bro|fr+|frfr|ong|idk|idc|wtf|nice|true|same|mood|w|l|oof|rip|damn|bet|word|facts|real|sheesh|huh|what|wbu|hbu|gn|gm|ty|np|nvm|stop|why|wow|:\)|:\(|\)\:|\(\:|<3)$/i;
 
 try {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const datasetPath = path.join(__dirname, 'my_style_dataset_reversed.txt');
+  const datasetPath = path.join(MODULE_DIR, 'my_style_dataset_reversed.txt');
   STYLE_DATASET_TEXT = fs.readFileSync(datasetPath, 'utf8');
   STYLE_DATASET_LINES = STYLE_DATASET_TEXT.split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+
+  // If the file is a labeled 2-person chat log ("Me:" / "David:" etc.), the
+  // clone must learn ONLY my ("Me:") lines — otherwise it imitates the other
+  // person and gets confused about who it is. Continuation lines (no label)
+  // belong to whoever spoke last.
+  const labeledCount = STYLE_DATASET_LINES.filter((l) => /^\w[\w ]{0,19}:\s/.test(l)).length;
+  if (labeledCount >= 20) {
+    const mine = [];
+    let who = null;
+    for (const l of STYLE_DATASET_LINES) {
+      const m = l.match(/^(\w[\w ]{0,19}?):\s?(.*)$/);
+      if (m) {
+        who = /^me$/i.test(m[1].trim()) ? 'me' : 'other';
+        const t = m[2].trim();
+        if (who === 'me' && t) mine.push(t);
+      } else if (who === 'me') {
+        mine.push(l);
+      }
+    }
+    if (mine.length >= 20) {
+      STYLE_DATASET_LINES = mine;
+      STYLE_DATASET_TEXT = mine.join('\n');
+      console.log(`[READY] Detected chat log — clone using ${mine.length} of my own lines.`);
+    }
+  }
+
   STYLE_TOPIC_LINES = STYLE_DATASET_LINES.filter(
     (line) => line.length >= 18 && !FILLER_LINE_RE.test(line)
   );
@@ -121,6 +150,23 @@ try {
     `[WARN] Could not read my_style_dataset_reversed.txt (${err.code || err.message}). ` +
       'CloneChat / SchizoClone / GhostEcho will be limited until it exists.'
   );
+}
+
+// GuessWho game data (separate ranked file you keep locally).
+try {
+  const gwPath = path.join(MODULE_DIR, 'guess_who_messages.txt');
+  for (const line of fs.readFileSync(gwPath, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^(Olivia|David):\s?(.*)$/i);
+    if (m && m[2].trim()) {
+      const sender = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+      GUESS_WHO.push({ sender, text: m[2].trim() });
+    }
+  }
+  if (GUESS_WHO.length) {
+    console.log(`[READY] Loaded GuessWho: ${GUESS_WHO.length} messages.`);
+  }
+} catch {
+  /* optional — GuessWho mode just stays disabled if the file is absent */
 }
 
 const client = new Client({
@@ -354,6 +400,20 @@ function isNo(text) {
   return /\b(no|nope|nah|never|not|don'?t|cant|can'?t|false|wrong|negative|stop)\b/i.test(
     text || ''
   );
+}
+
+// GuessWho: weighted pick favoring the top (juiciest) of the ranked list.
+function pickGuessMsg() {
+  const n = GUESS_WHO.length;
+  const idx = Math.min(n - 1, Math.floor(Math.pow(Math.random(), 2.2) * n));
+  return GUESS_WHO[idx];
+}
+
+async function sendGuessRound(channel, entry) {
+  const m = pickGuessMsg();
+  entry.state.gwAnswer = m.sender;
+  entry.state.gwActive = true;
+  await channel.send(`**who sent this — Olivia or David?** 🤔\n\n> ${m.text}`);
 }
 
 // ---- Impersonator (AI) modes -----------------------------------------------
@@ -1500,7 +1560,48 @@ const modes = {
   },
 
   // ---------------------------------------------------------------------------
-  // Mode 29: AutoRage — the automated ragebait gauntlet. Runs a curated
+  // Mode 29: GuessWho — shows a real (juicy) message from the chat log and the
+  // target guesses who sent it: Olivia or David. Tracks score, loops forever.
+  // ---------------------------------------------------------------------------
+  async GuessWho(message, entry) {
+    if (!GUESS_WHO.length) {
+      await message.reply(
+        '(GuessWho offline — put guess_who_messages.txt next to index.js)'
+      );
+      return;
+    }
+    // No round in progress (e.g. they messaged first) → start one.
+    if (!entry.state.gwActive) {
+      await sendGuessRound(message.channel, entry);
+      return;
+    }
+
+    const g = (message.content || '').toLowerCase();
+    let guess = null;
+    if (/\b(olivia|liv|ol|o)\b/.test(g)) guess = 'Olivia';
+    else if (/\b(david|dav|d)\b/.test(g)) guess = 'David';
+    if (!guess) {
+      await message.reply('just say **olivia** or **david** lol');
+      return;
+    }
+
+    entry.state.gwActive = false;
+    const sc = entry.state.gwScore || (entry.state.gwScore = { right: 0, total: 0 });
+    sc.total += 1;
+    const correct = guess === entry.state.gwAnswer;
+    if (correct) sc.right += 1;
+    await message.reply(
+      `${correct ? '✅ correct!' : '❌ nope,'} it was **${entry.state.gwAnswer}**. ` +
+        `(${sc.right}/${sc.total})`
+    );
+
+    await sleep(1000);
+    if (!isLive(entry)) return;
+    await sendGuessRound(message.channel, entry);
+  },
+
+  // ---------------------------------------------------------------------------
+  // Mode 30: AutoRage — the automated ragebait gauntlet. Runs a curated
   // sequence of the OTHER modes against the target, strictly ONE AT A TIME,
   // fully finishing each stage before advancing, then loops forever until
   // !stop. Each incoming target message drives the current stage; messages that
@@ -1582,6 +1683,18 @@ const MODE_OPENERS = {
   },
   async Therapist(dm, entry) {
     await dm.send("👋 come in, sit down. so... tell me what's been on your mind lately.");
+  },
+  async GuessWho(dm, entry) {
+    entry.state.gwScore = { right: 0, total: 0 };
+    if (!GUESS_WHO.length) {
+      await dm.send('(GuessWho offline — put guess_who_messages.txt next to index.js)');
+      return;
+    }
+    await dm.send(
+      "🕵️ **GUESS WHO** — i'll show real messages, you guess who sent each one: " +
+        '**Olivia** or **David**. reply with the name. ready? go.'
+    );
+    await sendGuessRound(dm, entry);
   },
 };
 
