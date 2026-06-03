@@ -402,11 +402,30 @@ function isNo(text) {
   );
 }
 
-// GuessWho: weighted pick favoring the top (juiciest) of the ranked list.
+// GuessWho: draw only from the juiciest top tier of the ranked list (the file
+// is sorted best-first), skip ultra-short fragments, and avoid back-to-back
+// repeats — so the game shows genuinely fun messages, not boring filler.
+let gwLastShown = '';
 function pickGuessMsg() {
   const n = GUESS_WHO.length;
-  const idx = Math.min(n - 1, Math.floor(Math.pow(Math.random(), 2.2) * n));
-  return GUESS_WHO[idx];
+  const top = Math.min(n, 300); // only the top ~300 juiciest are game-worthy
+  let chosen = GUESS_WHO[0];
+  for (let tries = 0; tries < 8; tries++) {
+    const idx = Math.floor(Math.pow(Math.random(), 1.6) * top);
+    const m = GUESS_WHO[idx];
+    if (
+      m &&
+      m.text.length <= 160 && // skip long copypasta walls — keep rounds snappy
+      m.text.split(/\s+/).filter(Boolean).length >= 3 &&
+      m.text !== gwLastShown
+    ) {
+      chosen = m;
+      break;
+    }
+    chosen = m || chosen;
+  }
+  gwLastShown = chosen.text;
+  return chosen;
 }
 
 async function sendGuessRound(channel, entry) {
