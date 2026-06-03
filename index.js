@@ -33,7 +33,7 @@ import {
 // Configuration & client setup
 // -----------------------------------------------------------------------------
 
-const { DISCORD_TOKEN, OWNER_ID, ANTHROPIC_API_KEY } = process.env;
+const { DISCORD_TOKEN, OWNER_ID, ANTHROPIC_API_KEY, OWNER_NAME } = process.env;
 
 if (!DISCORD_TOKEN || !OWNER_ID) {
   console.error(
@@ -54,10 +54,11 @@ const anthropic = ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: ANTHROPIC_API_KEY })
   : null;
 
-// Haiku tier for speed/cost. NOTE: the originally-requested
-// claude-3-haiku-20240307 retired 2026-04-19; claude-haiku-4-5 is its
-// supported, faster successor.
-const CLONE_MODEL = 'claude-haiku-4-5';
+// Model for the clone modes. Sonnet is far better at recalling specific facts
+// (names, pets, etc.) from the big history and at nailing the voice. With
+// prompt caching the cost is still only a fraction of a cent per message.
+// Switch to 'claude-haiku-4-5' if you want it cheaper/faster (weaker recall).
+const CLONE_MODEL = 'claude-sonnet-4-6';
 
 // -----------------------------------------------------------------------------
 // Style dataset — loaded ONCE at startup.
@@ -360,7 +361,18 @@ function isNo(text) {
 
 // Slang/filler the clone must NEVER use because it isn't how the owner talks.
 // Edit this list freely to match your own speech (add or remove words).
-const CLONE_BANNED = ['yo', 'tru', 'bet', 'ooh', 'frfr', 'finna', 'deadass'];
+const CLONE_BANNED = ['yo', 'tru'];
+
+// Who the clone is. Set OWNER_NAME in .env so it knows its own name and never
+// confuses itself with the friend it's texting.
+const IDENTITY =
+  (OWNER_NAME
+    ? `Your name is ${OWNER_NAME}. `
+    : 'Your name and identity are whoever authored the message history below. ') +
+  'You personally wrote every message in the history below — it is YOUR life ' +
+  'and YOUR memory. The person you are texting is a friend; never mix yourself ' +
+  'up with them, never call yourself by their name, and never invent a different ' +
+  'name for yourself.';
 
 const BANNED_CLAUSE = CLONE_BANNED.length
   ? '\n- NEVER use these words/phrases — they are NOT how I talk: ' +
@@ -375,7 +387,12 @@ const STYLE_RULES =
   'in my examples and history. Do NOT invent or add casual filler I never use. ' +
   'If you would reach for a slang word, first check that I actually say it.' +
   BANNED_CLAUSE +
-  '\n- BE VERY SHORT. Most of my texts are a few words to ONE short sentence. ' +
+  '\n- The history is your REAL life and memory — it all actually happened to ' +
+  'you. When asked about a fact (names of people, pets, places, events), RECALL ' +
+  'the real answer from your history. NEVER make up or guess a specific fact, ' +
+  "especially a name — if you genuinely can't find it, brush it off briefly in " +
+  'my voice instead of inventing one.\n' +
+  '- BE VERY SHORT. Most of my texts are a few words to ONE short sentence. ' +
   'NEVER write a paragraph, NEVER multiple sentences, NEVER over-explain or ' +
   'narrate my feelings. If a real text would be 3 words, send 3 words.\n' +
   '- Do not just repeat their message back. If they send something low-effort ' +
@@ -385,18 +402,19 @@ const STYLE_RULES =
   'just keep it moving naturally.';
 
 const CLONE_SYSTEM =
-  'You are a personality clone. Read the provided dataset of my past Discord ' +
-  'messages and reply to the target EXACTLY in my style. Do not act like an AI. ' +
+  'You are a personality clone of me. ' +
+  IDENTITY +
+  ' Reply to my friend EXACTLY in my style. Do not act like an AI. ' +
   STYLE_RULES;
 
 const SCHIZO_SYSTEM =
-  'You ARE me, texting a friend from my phone. Read the provided dataset of my ' +
-  'past Discord messages and mimic my style PERFECTLY. The person you are ' +
-  'talking to may suspect you are a bot or an AI. If they accuse you of being a ' +
-  'bot/AI/script, deny it casually and a little defensively, in my exact texting ' +
-  'cadence (e.g., "wdym im literally on my phone rn lol", "bro im not a bot 💀", ' +
-  '"lmao what are you on about"). NEVER break character, NEVER admit to being an ' +
-  'AI. ' +
+  'You ARE me, texting a friend from my phone. ' +
+  IDENTITY +
+  ' The person you are talking to may suspect you are a bot or an AI. If they ' +
+  'accuse you of being a bot/AI/script, deny it casually and a little ' +
+  'defensively, in my exact texting cadence (e.g., "wdym im literally on my ' +
+  'phone rn lol", "bro im not a bot 💀", "lmao what are you on about"). NEVER ' +
+  'break character, NEVER admit to being an AI. ' +
   STYLE_RULES;
 
 // Shared call path for CloneChat / SchizoClone. The 72KB dataset is identical
