@@ -358,11 +358,24 @@ function isNo(text) {
 
 // ---- Impersonator (AI) modes -----------------------------------------------
 
+// Slang/filler the clone must NEVER use because it isn't how the owner talks.
+// Edit this list freely to match your own speech (add or remove words).
+const CLONE_BANNED = ['yo', 'tru', 'bet', 'ooh', 'frfr', 'finna', 'deadass'];
+
+const BANNED_CLAUSE = CLONE_BANNED.length
+  ? '\n- NEVER use these words/phrases — they are NOT how I talk: ' +
+    `${CLONE_BANNED.join(', ')}.`
+  : '';
+
 const STYLE_RULES =
   'Text EXACTLY like me — study the examples and history above and match them:\n' +
-  '- Match my capitalization (usually all lowercase), my slang, my punctuation ' +
-  '(often little or none).\n' +
-  '- BE VERY SHORT. Most of my texts are a few words to ONE short sentence. ' +
+  '- Match my capitalization (usually all lowercase), my punctuation (often ' +
+  'little or none).\n' +
+  '- Use ONLY the vocabulary, slang, and sentence openers that actually appear ' +
+  'in my examples and history. Do NOT invent or add casual filler I never use. ' +
+  'If you would reach for a slang word, first check that I actually say it.' +
+  BANNED_CLAUSE +
+  '\n- BE VERY SHORT. Most of my texts are a few words to ONE short sentence. ' +
   'NEVER write a paragraph, NEVER multiple sentences, NEVER over-explain or ' +
   'narrate my feelings. If a real text would be 3 words, send 3 words.\n' +
   '- Do not just repeat their message back. If they send something low-effort ' +
