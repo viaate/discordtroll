@@ -73,6 +73,8 @@ let STYLE_DATASET_LINES = [];
 let STYLE_TOPIC_LINES = [];
 // Clean, conversational lines for GhostEcho (no URLs, no long pasted artifacts).
 let STYLE_GHOST_LINES = [];
+// A short, fixed sample of real short texts used as few-shot brevity anchors.
+let STYLE_EXAMPLES_TEXT = '';
 
 // One-word / pure-reaction lines that make poor conversation topics.
 const FILLER_LINE_RE =
@@ -99,8 +101,20 @@ try {
       !/^(bottom|top) image:/i.test(line)
   );
   if (!STYLE_GHOST_LINES.length) STYLE_GHOST_LINES = STYLE_DATASET_LINES;
+  // Few-shot brevity anchors: a fixed, spread-out sample of real SHORT texts.
+  // Deterministic (every Nth) so the cached prompt prefix stays byte-stable.
+  const shortLines = STYLE_GHOST_LINES.filter((l) => l.length >= 2 && l.length <= 40);
+  const want = Math.min(15, shortLines.length);
+  const examples = [];
+  if (want) {
+    const step = Math.max(1, Math.floor(shortLines.length / want));
+    for (let i = 0; i < shortLines.length && examples.length < want; i += step) {
+      examples.push(shortLines[i]);
+    }
+  }
+  STYLE_EXAMPLES_TEXT = examples.join('\n');
   console.log(
-    `[READY] Loaded style dataset: ${STYLE_DATASET_TEXT.length} chars, ${STYLE_DATASET_LINES.length} lines (${STYLE_TOPIC_LINES.length} topic, ${STYLE_GHOST_LINES.length} ghost).`
+    `[READY] Loaded style dataset: ${STYLE_DATASET_TEXT.length} chars, ${STYLE_DATASET_LINES.length} lines (${STYLE_TOPIC_LINES.length} topic, ${STYLE_GHOST_LINES.length} ghost, ${examples.length} examples).`
   );
 } catch (err) {
   console.warn(
@@ -345,17 +359,17 @@ function isNo(text) {
 // ---- Impersonator (AI) modes -----------------------------------------------
 
 const STYLE_RULES =
-  'Copy my exact capitalization rules (e.g., if I use lowercase, you use ' +
-  'lowercase), my slang, my brevity, and my punctuation. Keep replies short — ' +
-  'usually a single short line, like a real text message. ' +
-  'DRIVE the conversation, do not just react: ask questions, share opinions, ' +
-  'and bring up things I actually talk about (you can see my topics and ' +
-  'interests in the dataset). NEVER just repeat their message back to them, ' +
-  'and never let it go dry — if they send something low-effort (one word, ' +
-  '"lmao", an emoji), change the subject to something I\'d actually bring up. ' +
-  'CRITICAL: you can see the recent conversation above. Never send the same ' +
-  'line twice, and never re-use a reply you already gave — always move things ' +
-  'forward with something new.';
+  'Text EXACTLY like me — study the examples and history above and match them:\n' +
+  '- Match my capitalization (usually all lowercase), my slang, my punctuation ' +
+  '(often little or none).\n' +
+  '- BE VERY SHORT. Most of my texts are a few words to ONE short sentence. ' +
+  'NEVER write a paragraph, NEVER multiple sentences, NEVER over-explain or ' +
+  'narrate my feelings. If a real text would be 3 words, send 3 words.\n' +
+  '- Do not just repeat their message back. If they send something low-effort ' +
+  '(one word, "lmao", an emoji), react briefly OR casually bring up something ' +
+  "I'd actually say — but still ONE short line.\n" +
+  '- You can see the recent conversation; never send a line you already sent, ' +
+  'just keep it moving naturally.';
 
 const CLONE_SYSTEM =
   'You are a personality clone. Read the provided dataset of my past Discord ' +
@@ -400,11 +414,18 @@ async function styleClone(message, systemText, entry) {
       : null;
 
   const system = [
-    { type: 'text', text: systemText },
     {
-      // Big, stable block → cache_control breakpoint caches it (+ instructions).
       type: 'text',
-      text: `Here is the dataset of my past messages, one per line:\n\n${STYLE_DATASET_TEXT}`,
+      text:
+        'Examples of how I text — copy this exact length and tone:\n' +
+        `${STYLE_EXAMPLES_TEXT}\n\n` +
+        'Full history of my past messages, one per line:\n' +
+        STYLE_DATASET_TEXT,
+    },
+    {
+      // Both stable blocks are cached up to this breakpoint.
+      type: 'text',
+      text: systemText,
       cache_control: { type: 'ephemeral' },
     },
   ];
@@ -412,9 +433,8 @@ async function styleClone(message, systemText, entry) {
     system.push({
       type: 'text',
       text:
-        'For THIS reply, take the lead and bring up a topic I would actually ' +
-        `raise — in the same spirit as this past message of mine: "${steer}". ` +
-        'Rephrase it naturally in my voice; do NOT quote it verbatim.',
+        'If it fits naturally, casually bring up something like this — in a few ' +
+        `words, in my voice, no quoting: "${steer}". Keep it to ONE short line.`,
     });
   }
 
@@ -433,7 +453,7 @@ async function styleClone(message, systemText, entry) {
   try {
     const response = await anthropic.messages.create({
       model: CLONE_MODEL,
-      max_tokens: 300,
+      max_tokens: 80, // hard cap so it texts short instead of writing paragraphs
       system,
       messages: history,
     });
