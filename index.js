@@ -68,6 +68,14 @@ const CLONE_MODEL = 'claude-haiku-4-5';
 
 let STYLE_DATASET_TEXT = '';
 let STYLE_DATASET_LINES = [];
+// Substantive lines (real topics, not "lol"/"yeah") the clone can proactively
+// bring up to keep the conversation from going dry.
+let STYLE_TOPIC_LINES = [];
+
+// One-word / pure-reaction lines that make poor conversation topics.
+const FILLER_LINE_RE =
+  /^(lol|lmao+|lmfao+|haha+|hah|ok|okay|k+|yeah?|ya|nah|no|yes|yep|yup|bruh|bro|fr+|frfr|ong|idk|idc|wtf|nice|true|same|mood|w|l|oof|rip|damn|bet|word|facts|real|sheesh|huh|what|wbu|hbu|gn|gm|ty|np|nvm|stop|why|wow|:\)|:\(|\)\:|\(\:|<3)$/i;
+
 try {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const datasetPath = path.join(__dirname, 'my_style_dataset_reversed.txt');
@@ -75,8 +83,12 @@ try {
   STYLE_DATASET_LINES = STYLE_DATASET_TEXT.split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+  STYLE_TOPIC_LINES = STYLE_DATASET_LINES.filter(
+    (line) => line.length >= 18 && !FILLER_LINE_RE.test(line)
+  );
+  if (!STYLE_TOPIC_LINES.length) STYLE_TOPIC_LINES = STYLE_DATASET_LINES;
   console.log(
-    `[READY] Loaded style dataset: ${STYLE_DATASET_TEXT.length} chars, ${STYLE_DATASET_LINES.length} lines.`
+    `[READY] Loaded style dataset: ${STYLE_DATASET_TEXT.length} chars, ${STYLE_DATASET_LINES.length} lines (${STYLE_TOPIC_LINES.length} topic lines).`
   );
 } catch (err) {
   console.warn(
@@ -320,27 +332,40 @@ function isNo(text) {
 
 // ---- Impersonator (AI) modes -----------------------------------------------
 
+const STYLE_RULES =
+  'Copy my exact capitalization rules (e.g., if I use lowercase, you use ' +
+  'lowercase), my slang, my brevity, and my punctuation. Keep replies short — ' +
+  'usually a single short line, like a real text message. ' +
+  'DRIVE the conversation, do not just react: ask questions, share opinions, ' +
+  'and bring up things I actually talk about (you can see my topics and ' +
+  'interests in the dataset). NEVER just repeat their message back to them, ' +
+  'and never let it go dry — if they send something low-effort (one word, ' +
+  '"lmao", an emoji), change the subject to something I\'d actually bring up.';
+
 const CLONE_SYSTEM =
   'You are a personality clone. Read the provided dataset of my past Discord ' +
-  'messages. You must reply to the target\'s message EXACTLY in my style. Copy ' +
-  'my exact capitalization rules (e.g., if I use lowercase, you use lowercase), ' +
-  'my slang, my brevity, and my punctuation. Do not act like an AI. Keep it ' +
-  'short — usually a single short line, like a real text message.';
+  'messages and reply to the target EXACTLY in my style. Do not act like an AI. ' +
+  STYLE_RULES;
 
 const SCHIZO_SYSTEM =
   'You ARE me, texting a friend from my phone. Read the provided dataset of my ' +
-  'past Discord messages and mimic my style PERFECTLY — my exact capitalization ' +
-  '(lowercase if I write lowercase), slang, brevity, and punctuation. The person ' +
-  'you are talking to may suspect you are a bot or an AI. If they accuse you of ' +
-  'being a bot/AI/script, deny it casually and a little defensively, in my exact ' +
-  'texting cadence (e.g., "wdym im literally on my phone rn lol", "bro im not a ' +
-  'bot 💀", "lmao what are you on about"). NEVER break character, NEVER admit to ' +
-  'being an AI, and keep every reply short and human.';
+  'past Discord messages and mimic my style PERFECTLY. The person you are ' +
+  'talking to may suspect you are a bot or an AI. If they accuse you of being a ' +
+  'bot/AI/script, deny it casually and a little defensively, in my exact texting ' +
+  'cadence (e.g., "wdym im literally on my phone rn lol", "bro im not a bot 💀", ' +
+  '"lmao what are you on about"). NEVER break character, NEVER admit to being an ' +
+  'AI. ' +
+  STYLE_RULES;
 
 // Shared call path for CloneChat / SchizoClone. The 72KB dataset is identical
 // on every request, so it goes in a cached system block — after the first call
 // it's served from cache at ~10% of input cost instead of full price each time.
-async function styleClone(message, systemText) {
+//
+// To keep the chat from going dry, every few turns (and whenever the target
+// sends a low-effort message) we append a small, UNcached steer block pointing
+// at a real topic from my history. It sits AFTER the cache breakpoint, so the
+// cached prefix stays intact and the topic varies per call.
+async function styleClone(message, systemText, entry) {
   if (!anthropic) {
     await message.reply('(clone offline — owner needs to set ANTHROPIC_API_KEY)');
     return;
@@ -350,22 +375,41 @@ async function styleClone(message, systemText) {
     return;
   }
 
+  // Decide whether to steer toward a past topic this turn.
+  entry.state.turns = (entry.state.turns || 0) + 1;
+  const incoming = (message.content || '').trim();
+  const lowEffort = incoming.length <= 5 || incoming.split(/\s+/).length <= 1;
+  const steer =
+    STYLE_TOPIC_LINES.length && (lowEffort || entry.state.turns % 3 === 0)
+      ? pick(STYLE_TOPIC_LINES)
+      : null;
+
+  const system = [
+    { type: 'text', text: systemText },
+    {
+      // Big, stable block → cache_control breakpoint caches it (+ instructions).
+      type: 'text',
+      text: `Here is the dataset of my past messages, one per line:\n\n${STYLE_DATASET_TEXT}`,
+      cache_control: { type: 'ephemeral' },
+    },
+  ];
+  if (steer) {
+    system.push({
+      type: 'text',
+      text:
+        'For THIS reply, take the lead and bring up a topic I would actually ' +
+        `raise — in the same spirit as this past message of mine: "${steer}". ` +
+        'Rephrase it naturally in my voice; do NOT quote it verbatim.',
+    });
+  }
+
   await message.channel.sendTyping();
   try {
     const response = await anthropic.messages.create({
       model: CLONE_MODEL,
       max_tokens: 300,
-      system: [
-        { type: 'text', text: systemText },
-        {
-          // Big, stable block last → cache_control breakpoint caches it (and
-          // the instructions before it) across every message.
-          type: 'text',
-          text: `Here is the dataset of my past messages, one per line:\n\n${STYLE_DATASET_TEXT}`,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [{ role: 'user', content: message.content || '...' }],
+      system,
+      messages: [{ role: 'user', content: incoming || '...' }],
     });
 
     const reply = response.content
@@ -1328,13 +1372,13 @@ const modes = {
   // Mode 26: CloneChat (AI) — reply to the target in the owner's exact style,
   // using the message history dataset as context.
   async CloneChat(message, entry) {
-    await styleClone(message, CLONE_SYSTEM);
+    await styleClone(message, CLONE_SYSTEM, entry);
   },
 
   // Mode 27: SchizoClone (AI) — same style mimicry, but actively gaslights the
   // target into believing it's really the owner texting, denying it's a bot.
   async SchizoClone(message, entry) {
-    await styleClone(message, SCHIZO_SYSTEM);
+    await styleClone(message, SCHIZO_SYSTEM, entry);
   },
 
   // Mode 28: GhostEcho (local, no API) — reply with a real historical message
