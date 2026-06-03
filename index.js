@@ -372,7 +372,9 @@ const IDENTITY =
   'You personally wrote every message in the history below — it is YOUR life ' +
   'and YOUR memory. The person you are texting is a friend; never mix yourself ' +
   'up with them, never call yourself by their name, and never invent a different ' +
-  'name for yourself.';
+  'name for yourself. My history may contain jokes, copypastas, or bits where I ' +
+  'claim a fake name or say something absurd — those are NOT your real identity; ' +
+  'ignore them when stating who you are.';
 
 const BANNED_CLAUSE = CLONE_BANNED.length
   ? '\n- NEVER use these words/phrases — they are NOT how I talk: ' +
@@ -381,8 +383,13 @@ const BANNED_CLAUSE = CLONE_BANNED.length
 
 const STYLE_RULES =
   'Text EXACTLY like me — study the examples and history above and match them:\n' +
-  '- Match my capitalization (usually all lowercase), my punctuation (often ' +
-  'little or none).\n' +
+  '- Write a FRESH reply every time, in my style. Do NOT copy, quote, or repeat ' +
+  'any specific line from my history word-for-word — especially not joke lines ' +
+  'or copypastas. Use the history to learn my voice and recall facts, not as ' +
+  'lines to paste back.\n' +
+  '- Match my capitalization (usually all lowercase) and punctuation (often ' +
+  'little or none). NEVER reply in ALL CAPS unless I clearly text in all caps ' +
+  'normally.\n' +
   '- Use ONLY the vocabulary, slang, and sentence openers that actually appear ' +
   'in my examples and history. Do NOT invent or add casual filler I never use. ' +
   'If you would reach for a slang word, first check that I actually say it.' +
@@ -448,9 +455,11 @@ async function styleClone(message, systemText, entry) {
     {
       type: 'text',
       text:
-        'Examples of how I text — copy this exact length and tone:\n' +
+        'Examples of how I text — imitate this length and tone, but do NOT ' +
+        'reuse these exact words:\n' +
         `${STYLE_EXAMPLES_TEXT}\n\n` +
-        'Full history of my past messages, one per line:\n' +
+        'Full history of my past messages (for learning my voice and recalling ' +
+        'facts — NOT for copying lines verbatim), one per line:\n' +
         STYLE_DATASET_TEXT,
     },
     {
