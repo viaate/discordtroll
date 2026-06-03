@@ -71,6 +71,8 @@ let STYLE_DATASET_LINES = [];
 // Substantive lines (real topics, not "lol"/"yeah") the clone can proactively
 // bring up to keep the conversation from going dry.
 let STYLE_TOPIC_LINES = [];
+// Clean, conversational lines for GhostEcho (no URLs, no long pasted artifacts).
+let STYLE_GHOST_LINES = [];
 
 // One-word / pure-reaction lines that make poor conversation topics.
 const FILLER_LINE_RE =
@@ -87,8 +89,18 @@ try {
     (line) => line.length >= 18 && !FILLER_LINE_RE.test(line)
   );
   if (!STYLE_TOPIC_LINES.length) STYLE_TOPIC_LINES = STYLE_DATASET_LINES;
+  // GhostEcho: drop URLs, pasted artifacts (e.g. "Bottom Image: ..."), and
+  // anything too long to read like a real text reply.
+  STYLE_GHOST_LINES = STYLE_DATASET_LINES.filter(
+    (line) =>
+      line.length >= 2 &&
+      line.length <= 80 &&
+      !/https?:\/\//i.test(line) &&
+      !/^(bottom|top) image:/i.test(line)
+  );
+  if (!STYLE_GHOST_LINES.length) STYLE_GHOST_LINES = STYLE_DATASET_LINES;
   console.log(
-    `[READY] Loaded style dataset: ${STYLE_DATASET_TEXT.length} chars, ${STYLE_DATASET_LINES.length} lines (${STYLE_TOPIC_LINES.length} topic lines).`
+    `[READY] Loaded style dataset: ${STYLE_DATASET_TEXT.length} chars, ${STYLE_DATASET_LINES.length} lines (${STYLE_TOPIC_LINES.length} topic, ${STYLE_GHOST_LINES.length} ghost).`
   );
 } catch (err) {
   console.warn(
@@ -340,7 +352,10 @@ const STYLE_RULES =
   'and bring up things I actually talk about (you can see my topics and ' +
   'interests in the dataset). NEVER just repeat their message back to them, ' +
   'and never let it go dry — if they send something low-effort (one word, ' +
-  '"lmao", an emoji), change the subject to something I\'d actually bring up.';
+  '"lmao", an emoji), change the subject to something I\'d actually bring up. ' +
+  'CRITICAL: you can see the recent conversation above. Never send the same ' +
+  'line twice, and never re-use a reply you already gave — always move things ' +
+  'forward with something new.';
 
 const CLONE_SYSTEM =
   'You are a personality clone. Read the provided dataset of my past Discord ' +
@@ -403,13 +418,24 @@ async function styleClone(message, systemText, entry) {
     });
   }
 
+  // Persistent conversation history so the clone remembers the back-and-forth
+  // and stops repeating itself. Capped to the last few turns to bound cost.
+  const MAX_HISTORY = 12;
+  const history = entry.state.history || (entry.state.history = []);
+  history.push({ role: 'user', content: incoming || '...' });
+  if (history.length > MAX_HISTORY) {
+    history.splice(0, history.length - MAX_HISTORY);
+  }
+  // The Messages API requires the first message to be from the user.
+  while (history.length && history[0].role === 'assistant') history.shift();
+
   await message.channel.sendTyping();
   try {
     const response = await anthropic.messages.create({
       model: CLONE_MODEL,
       max_tokens: 300,
       system,
-      messages: [{ role: 'user', content: incoming || '...' }],
+      messages: history,
     });
 
     const reply = response.content
@@ -418,7 +444,10 @@ async function styleClone(message, systemText, entry) {
       .join('')
       .trim();
 
-    if (reply) await message.reply(reply);
+    if (reply) {
+      history.push({ role: 'assistant', content: reply });
+      await message.reply(reply);
+    }
   } catch (err) {
     console.error('[clone] Anthropic API error:', err?.status || '', err?.message || err);
   }
@@ -1385,20 +1414,43 @@ const modes = {
   // of the owner's that contains the target's most prominent word; if none
   // matches, a random line. 2.5s delay so it feels like a real text.
   async GhostEcho(message, entry) {
-    if (!STYLE_DATASET_LINES.length) return;
+    const pool = STYLE_GHOST_LINES.length
+      ? STYLE_GHOST_LINES
+      : STYLE_DATASET_LINES;
+    if (!pool.length) return;
     if (entry.state.busy) return; // don't stack replies
     entry.state.busy = true;
     try {
-      const keyword = keywordOf(message.content).toLowerCase();
-      // Whole-word, case-insensitive match against the owner's history.
-      const wordRe = new RegExp(
-        `\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
-        'i'
-      );
-      const matches = STYLE_DATASET_LINES.filter((line) => wordRe.test(line));
-      const choice = matches.length
-        ? pick(matches)
-        : pick(STYLE_DATASET_LINES);
+      // Score lines by how many of the target's significant words they contain,
+      // so the echo is at least topically relevant instead of pure noise.
+      const words = [
+        ...new Set((message.content || '').toLowerCase().match(/[a-z']{4,}/g) || []),
+      ];
+      let choice = null;
+      if (words.length) {
+        const wordRes = words.map(
+          (w) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
+        );
+        let best = [];
+        let bestScore = 0;
+        for (const line of pool) {
+          const ll = line.toLowerCase();
+          let score = 0;
+          for (const re of wordRes) if (re.test(ll)) score++;
+          if (score > bestScore) {
+            bestScore = score;
+            best = [line];
+          } else if (score === bestScore && score > 0) {
+            best.push(line);
+          }
+        }
+        if (best.length) choice = pick(best);
+      }
+      // No keyword hit → a short, conversational line (not a long artifact).
+      if (!choice) {
+        const shortish = pool.filter((l) => l.length <= 40);
+        choice = pick(shortish.length ? shortish : pool);
+      }
 
       await sleep(2500); // feels like a human typing a reply
       if (!isLive(entry)) return;
